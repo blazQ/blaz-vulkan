@@ -1,0 +1,47 @@
+# CMake build artifacts
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+Makefile
+_deps/
+install_manifest.txt
+
+# Build output directories
+build/
+out/
+bin/
+lib/
+
+# Compiled binaries and executables
+main
+*.exe
+*.out
+*.app
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Compiled shaders
+*.spv
+
+# IDE / Editor
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+.vs/
+CMake/
+
+# Misc
+*.o
+*.d
+*.dSYM/
+cputypetest.c
