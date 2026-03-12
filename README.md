@@ -1,7 +1,7 @@
 # Sparse notes on Vulkan and Computer Graphics
 
 This repository documents my process of studying the Vulkan API and my efforts in getting to know low level graphical APIs to eventually being able to create cool graphic projects or implement complex graphics workflows in my own projects.
-It also documents an effor to better understand low level concepts as a whole and to make my C++ up to speed with modern standards. 
+It also documents an effort to better understand low level concepts as a whole and to make my C++ up to speed with modern standards. 
 So watch how I fail and this repository gets forgotten in a month ;`)
 
 As of now, the repository only contains code relative to the introductory steps of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), but I'll update it with other projects or link other repos I'll create during the process.
