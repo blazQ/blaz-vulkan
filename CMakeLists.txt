@@ -72,8 +72,7 @@ else()
   )
 endif()
 
-find_package(stb REQUIRED)
-set(STB_INCLUDEDIR ${stb_INCLUDE_DIRS})
+find_path(STB_INCLUDEDIR stb_image.h PATH_SUFFIXES stb REQUIRED)
 
 add_executable (glslang::validator IMPORTED)
 find_program (GLSLANG_VALIDATOR "glslangValidator" HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
