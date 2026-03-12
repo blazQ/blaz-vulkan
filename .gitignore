@@ -40,6 +40,9 @@ main
 .vs/
 CMake/
 
+# Personal notes
+notes/
+
 # Misc
 *.o
 *.d

@@ -55,6 +55,7 @@ private:
 	vk::SurfaceFormatKHR swapChainSurfaceFormat;
 	vk::Extent2D swapChainExtent;
 	std::vector<vk::raii::ImageView> swapChainImageViews;
+	vk::raii::PipelineLayout pipelineLayout = nullptr;
 
 	std::vector<const char *> requiredDeviceExtension = {
 		vk::KHRSwapchainExtensionName};
@@ -99,9 +100,30 @@ private:
 	void createGraphicsPipeline()
 	{
 		vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/slang.spv"));
-		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule,  .pName = "vertMain" };
-		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
+		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
 		vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+		std::vector dynamicStates = {
+			vk::DynamicState::eViewport,
+			vk::DynamicState::eScissor};
+
+		vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::PrimitiveTopology::eTriangleList};
+		vk::Viewport viewport{.x = 0.0f, .y = 0.0f, .width = static_cast<float>(swapChainExtent.width), .height = static_cast<float>(swapChainExtent.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+		vk::Rect2D scissor{.offset = vk::Offset2D{0, 0}, .extent = swapChainExtent};
+		vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .pViewports = &viewport, .scissorCount = 1, .pScissors = &scissor};
+
+		vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eClockwise, .depthBiasEnable = vk::False, .depthBiasSlopeFactor = 1.0f, .lineWidth = 1.0f};
+		vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
+
+		vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+			.blendEnable = vk::False,
+			.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+		vk::PipelineColorBlendStateCreateInfo colorBlending{.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 0, .pushConstantRangeCount = 0};
+
+		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 	}
 
 	void mainLoop()
@@ -266,10 +288,11 @@ private:
 		}
 
 		// query for Vulkan 1.3 features
-		vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-			{},							   // vk::PhysicalDeviceFeatures2
-			{.dynamicRendering = true},	   // vk::PhysicalDeviceVulkan13Features
-			{.extendedDynamicState = true} // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+		vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
+			{},							    // vk::PhysicalDeviceFeatures2
+			{.shaderDrawParameters = true}, // vk::PhysicalDeviceVulkan11Features
+			{.dynamicRendering = true},	    // vk::PhysicalDeviceVulkan13Features
+			{.extendedDynamicState = true}  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 		};
 
 		// create a Device
@@ -399,9 +422,10 @@ private:
 		return buffer;
 	}
 
-	[[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
-		vk::ShaderModuleCreateInfo createInfo{ .codeSize = code.size() * sizeof(char), .pCode = reinterpret_cast<const uint32_t*>(code.data()) };
-		vk::raii::ShaderModule shaderModule{ device, createInfo };
+	[[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char> &code) const
+	{
+		vk::ShaderModuleCreateInfo createInfo{.codeSize = code.size() * sizeof(char), .pCode = reinterpret_cast<const uint32_t *>(code.data())};
+		vk::raii::ShaderModule shaderModule{device, createInfo};
 		return shaderModule;
 	}
 };
