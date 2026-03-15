@@ -10,6 +10,32 @@ After every lesson in the tutorial I'll make a commit.
 My objective is to have a commit a day, and see where it goes.
 
 
+## Building
+
+### Prerequisites
+
+- CMake 3.29+
+- Vulkan SDK 1.4.335+
+- GLFW3, GLM
+- `slangc` (Slang shader compiler)
+
+The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system library path. If you installed `slangc` manually and only copied the binary, copy the accompanying `.so` files to `/usr/local/lib/` and run `sudo ldconfig`.
+
+### Compile
+
+```bash
+cmake -S . -B _build
+cmake --build _build
+```
+
+The executable will be at `_build/main/main`. Run it from that directory so the relative shader paths resolve:
+
+```bash
+cd _build/main && ./main
+```
+
+---
+
 ## On the graphics pipeline
 
 <div align="center">

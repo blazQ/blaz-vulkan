@@ -374,8 +374,20 @@ private:
 	{
 		cleanupSwapChain();
 
-		glfwDestroyWindow(window);
+		inFlightFences.clear();
+		renderFinishedSemaphores.clear();
+		presentCompleteSemaphores.clear();
+		commandBuffers.clear();
+		commandPool = nullptr;
+		graphicsPipeline = nullptr;
+		pipelineLayout = nullptr;
+		queue = nullptr;
+		device = nullptr;
+		surface = nullptr;
+		debugMessenger = nullptr;
+		instance = nullptr;
 
+		glfwDestroyWindow(window);
 		glfwTerminate();
 	}
 
