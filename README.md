@@ -9,6 +9,7 @@ As of now, the repository only contains code relative to the introductory steps 
 After every lesson in the tutorial I'll make a commit.
 My objective is to have a commit a day, and see where it goes.
 
+I'll eventually clean up this readme, but for the time being relevant notes on the API itself will be in the [notes](./notes) folder.
 
 ## Building
 
