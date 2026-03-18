@@ -9,22 +9,41 @@
 #include <stdexcept>
 #include <vector>
 
+
+/* This block is necessary for picking the right import path.
+Importing Vulkan using an #include preprocessor directive is the classic C approach that requires compiling Vulkan from scratch, but always works.
+Importing with the C++ import module is the modern approach introduced in C++ 20. It uses a precompiled unit, but requires a modern build system. It results in faster compile times.
+*/
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #include <vulkan/vulkan_raii.hpp>
 #else
 import vulkan_hpp;
 #endif
 
+/* This block is necessary because Vulkan itself is not aware of platform specific components, like the OS Windowing System.
+Vulkan knows about abstract concepts, like a VkSurface, but has no idea how to create one in Windows, MacOS etc. and each platform has its own native surface extension.
+GLFW solves this, but requires specifying with this macro to include vulkan.h into the library. This makes the library aware that it needs to return the correct VkSurface. */
 #define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
+
+/* GLFW is an Open Source, multi-platform library for OpenGL, OpenGL ES and Vulkan development on the desktop. 
+It provides a simple API for creating windows, contexts and surfaces, receiving input and events. */
 #include <GLFW/glfw3.h>
 
+
+/* These are constants that specify the surface dimensions.*/
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
+
+/* This is used to make the drawing process more efficient by avoiding the CPU being idle while the GPU renders frame N.
+By having multiple frames in flight, while the CPU records commands for frame N+1, the GPU renders frame N.*/
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
+/* Validation layers are explained in the notes/hello_triangle.md section. */
 const std::vector<char const *> validationLayers = {
-	"VK_LAYER_KHRONOS_validation"};
+	"VK_LAYER_KHRONOS_validation"
+};
 
+/* Uses a standard C macro automatically defined by the build system to disable validation layers when compiling in Release mode. */
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
 #else
@@ -62,14 +81,21 @@ private:
 	vk::raii::Pipeline graphicsPipeline = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
 	std::vector<vk::raii::CommandBuffer> commandBuffers;
+
+	// A Vector of Semaphores to signal when frames have been presented
 	std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+
+	// A Vector of Semaphores to signal when frames have been rendered
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+
+	// A Fence used to wait for the previous frame to finish, on the CPU.
 	std::vector<vk::raii::Fence> inFlightFences;
 
 	bool framebufferResized = false;
 
 	std::vector<const char *> requiredDeviceExtension = {
 		vk::KHRSwapchainExtensionName};
+
 
 	void initWindow()
 	{
@@ -298,16 +324,37 @@ private:
 		device.waitIdle();
 	}
 
+	/* Architecture of the drawFrame function: 
+		CPU                          GPU
+		|                            |
+		waitForFences ◄──────────────── fence signaled (prev frame done)
+		|                            |
+		acquireNextImage             |
+		|                            |
+		reset + record               │ (GPU still busy on other slot)
+		|                            |
+		queue.submit ─────────────────► starts rendering
+		|          wait on semaphore |
+		queue.present ◄─────────────── renderFinished semaphore signaled
+		|                            |
+		frameIndex++                 |
+	*/
 	void drawFrame()
 	{
+		// Wait for the previous frame to finish rendering (CPU)
 		auto fenceResult = device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
 		if (fenceResult != vk::Result::eSuccess)
 		{
 			throw std::runtime_error("failed to wait for fence!");
 		}
 
+		// Ask the swapchain for the next available framebuffer (image) to render to.
 		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[frameIndex], nullptr);
 
+		// Handles when swap chain is no longer compatible (window drastically resized or screen orientation changed, for example)
+		// The rendering proceeds even if the surface is suboptimal (eSuboptimalKHR) (window slightly resized, for example).
+		// Cases in which the surface is suboptimal:
+		// 
 		if (result == vk::Result::eErrorOutOfDateKHR)
 		{
 			recreateSwapChain();
@@ -319,13 +366,19 @@ private:
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
 
-		// Only reset the fence if we are submitting work
+		// Only reset the fence if we are submitting work, to avoid deadlocks.
 		device.resetFences(*inFlightFences[frameIndex]);
 
 		commandBuffers[frameIndex].reset();
+		
+		// Record the next rendering command
 		recordCommandBuffer(imageIndex);
 
+		// A flag that allows free execution of all other pipeline stages until Color Attachment output.
 		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+
+		// Detailed information about the command to execute: wait on presentCompleteSemaphore (don't start until the image is ready to be written to)
+		// Signal renderFinishedSemaphores when done.
 		const vk::SubmitInfo submitInfo{
 			.waitSemaphoreCount = 1,
 			.pWaitSemaphores = &*presentCompleteSemaphores[frameIndex],
@@ -335,8 +388,10 @@ private:
 			.signalSemaphoreCount = 1,
 			.pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]};
 
+		// Submits a command with the previous info and the fence to signal when done, so the CPU knows the next free slot at the next draw iteration.
 		queue.submit(submitInfo, *inFlightFences[frameIndex]);
 
+		// Present the image, only after render has finished.
 		const vk::PresentInfoKHR presentInfoKHR{
 			.waitSemaphoreCount = 1,
 			.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
@@ -346,6 +401,7 @@ private:
 
 		result = queue.presentKHR(presentInfoKHR);
 
+		// Swapchain rewcreation: if at this point the swapchain is out of date or suboptimal or the framebuffer has been resized, we need to recreate the swap chain.
 		if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
 		{
 			framebufferResized = false;
@@ -367,6 +423,8 @@ private:
 		default:
 			break; // an unexpected result is returned!
 		}
+
+		// Update frame index.
 		frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
