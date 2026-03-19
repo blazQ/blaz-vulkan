@@ -63,3 +63,10 @@
   - Under the hood, GLFW creates a compatible window surface based on the OP window system. 
     - For example, on Windows, it uses the glfwGetWind32Window to get the raw HWND and creates a compatible Vulkan Win32SurfaceKHR using RAII.
 - This affects the logical device creation: we need to select a device that has the capability of both rendering graphics but also present to a compatible surface (check previous paragraph)
+
+# Swap Chain
+
+- Infrastructure that owns the buffer we render to before we visualize them to the screen
+- It's a queue of images that are waiting to be presented
+- It's purpose is to synchronize the presentation of images with the refresh rate of the screen.
+- Not all devices support rendering to a screen, as such we need to check for Swapchain compatibility when creating a Logical Device
