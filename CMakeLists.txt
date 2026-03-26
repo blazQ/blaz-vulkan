@@ -11,6 +11,7 @@ find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 find_package(Vulkan 1.4.335 REQUIRED)
 find_path(STB_INCLUDEDIR stb_image.h PATH_SUFFIXES stb REQUIRED)
+find_path(TINYOBJ_INCLUDEDIR tiny_obj_loader.h REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
 # Vulkan C++20 module wrapper (or a plain interface when the option is off)
@@ -53,8 +54,9 @@ add_custom_command(
 )
 add_custom_target(shaders DEPENDS ${CMAKE_BINARY_DIR}/shaders/slang.spv)
 
-# Copy textures to build directory at configure time
+# Copy textures and models to build directory at configure time
 file(COPY ${CMAKE_SOURCE_DIR}/textures DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
 
 add_executable(main main.cpp)
 set_target_properties(main PROPERTIES
@@ -62,7 +64,7 @@ set_target_properties(main PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 target_link_libraries(main PRIVATE Vulkan::cppm glfw)
-target_include_directories(main PRIVATE ${STB_INCLUDEDIR})
+target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR})
 target_compile_definitions(main PRIVATE VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS)
 add_dependencies(main shaders)
 
