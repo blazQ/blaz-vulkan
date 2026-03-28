@@ -4,7 +4,7 @@ This repository documents my process of studying the Vulkan API and my efforts i
 It also documents an effort to better understand low level concepts as a whole and to make my C++ up to speed with modern standards. 
 So watch how I fail and this repository gets forgotten in a month ;`)
 
-As of now, the repository only contains code relative to the introductory steps of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), but I'll update it with other projects or link other repos I'll create during the process.
+As of now, the repository only contains code up until the Multisampling chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html). The next steps are refactoring the code in order to abstract Vulkan initialization logic, implement a few cool graphical effects and fleshing out the notes before continuing with the Compute Shaders chapter.
 
 After every lesson in the tutorial I'll make a commit.
 My objective is to have a commit a day, and see where it goes.
