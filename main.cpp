@@ -293,6 +293,7 @@ private:
 			.addressModeU = vk::SamplerAddressMode::eRepeat,
 			.addressModeV = vk::SamplerAddressMode::eRepeat,
 			.addressModeW = vk::SamplerAddressMode::eRepeat,
+			.mipLodBias = 0.0,
 			.anisotropyEnable = vk::True,
 			.maxAnisotropy = properties.limits.maxSamplerAnisotropy};
 		samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
@@ -301,7 +302,7 @@ private:
 		samplerInfo.compareOp = vk::CompareOp::eAlways;
 		samplerInfo.mipLodBias = 0.0f;
 		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = 0.0f;
+		samplerInfo.maxLod = vk::LodClampNone;
 		textureSampler = vk::raii::Sampler(device, samplerInfo);
 	}
 
