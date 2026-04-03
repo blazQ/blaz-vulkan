@@ -44,11 +44,11 @@ add_custom_command(
     OUTPUT ${CMAKE_BINARY_DIR}/shaders/slang.spv
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
     COMMAND ${SLANGC_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/shaders/shader.slang
+        ${CMAKE_SOURCE_DIR}/src/shaders/shader.slang
         -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name
         -entry vertMain -entry fragMain
         -o ${CMAKE_BINARY_DIR}/shaders/slang.spv
-    DEPENDS ${CMAKE_SOURCE_DIR}/shaders/shader.slang
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/shader.slang
     COMMENT "Compiling Slang shaders"
     VERBATIM
 )
@@ -60,7 +60,7 @@ file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
-add_executable(main main.cpp
+add_executable(main src/main.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp

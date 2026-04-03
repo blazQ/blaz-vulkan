@@ -65,7 +65,7 @@ cd _build && ./main
 ## On the graphics pipeline
 
 <div align="center">
-  <img src="./data/references/vulkan_simplified_pipeline.svg" alt="Graphics Pipeline" width="60%" />
+  <img src="./media/screenshots//vulkan_simplified_pipeline.svg" alt="Graphics Pipeline" width="60%" />
 </div>
 
 Messy notes about general concepts:

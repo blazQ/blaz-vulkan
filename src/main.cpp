@@ -150,6 +150,7 @@ private:
 	vk::raii::Pipeline graphicsPipeline = nullptr;
 
 	vk::PresentModeKHR presentMode;
+	vk::PresentModeKHR pendingPresentMode = vk::PresentModeKHR::eMailbox;
 
 	// --- Command recording ---
 	// One pool owns the memory; one command buffer per frame in flight.
@@ -161,6 +162,9 @@ private:
 	// MSAA: we render into a multisampled color image and resolve into the
 	// swapchain image. The depth image tests fragment depth for occlusion.
 	vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1;
+	vk::SampleCountFlagBits maxMsaaSamples = vk::SampleCountFlagBits::e1;
+	vk::SampleCountFlagBits pendingMsaaSamples = vk::SampleCountFlagBits::e1;
+	vk::SampleCountFlags supportedMsaaSamples;
 	vk::raii::Image colorImage = nullptr;
 	vk::raii::DeviceMemory colorImageMemory = nullptr;
 	vk::raii::ImageView colorImageView = nullptr;
@@ -201,9 +205,10 @@ private:
 	std::vector<vk::raii::DescriptorSet> descriptorSets;
 
 	// --- Synchronization primitives ---
-	// presentComplete: signals when the swapchain image is available to render into.
-	// renderFinished: signals when rendering is done and the image can be presented.
-	// inFlightFence:  blocks the CPU until the GPU is done with this frame slot.
+	// presentComplete: signals when the swapchain image is available to render
+	// into. renderFinished: signals when rendering is done and the image can be
+	// presented. inFlightFence:  blocks the CPU until the GPU is done with this
+	// frame slot.
 	std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
@@ -443,6 +448,8 @@ private:
 			{
 				physicalDevice = device;
 				msaaSamples = getMaxUsableSampleCount();
+				maxMsaaSamples = msaaSamples;
+				pendingMsaaSamples = msaaSamples;
 				break;
 			}
 		}
@@ -457,6 +464,10 @@ private:
 	// (dynamic rendering, extended dynamic state).
 	bool isDeviceSuitable(vk::raii::PhysicalDevice const &physicalDevice)
 	{
+		// Check if the device is a discrete GPU.
+		bool isDiscreteGPU = physicalDevice.getProperties().deviceType ==
+							 vk::PhysicalDeviceType::eDiscreteGpu;
+
 		// Check if the physicalDevice supports the Vulkan 1.3 API version
 		bool supportsVulkan1_3 =
 			physicalDevice.getProperties().apiVersion >= VK_API_VERSION_1_3;
@@ -496,16 +507,21 @@ private:
 
 		// Return true if the physicalDevice meets all the criteria
 		return supportsVulkan1_3 && supportsGraphics &&
-			   supportsAllRequiredExtensions && supportsRequiredFeatures;
+			   supportsAllRequiredExtensions && supportsRequiredFeatures &&
+			   isDiscreteGPU;
 	}
 
 	// Queries the GPU for the highest sample count supported by both the color
 	// and depth framebuffers. Used to set msaaSamples.
 	vk::SampleCountFlagBits getMaxUsableSampleCount()
 	{
-		vk::PhysicalDeviceProperties physicalDeviceProperties = physicalDevice.getProperties();
+		vk::PhysicalDeviceProperties physicalDeviceProperties =
+			physicalDevice.getProperties();
 
-		vk::SampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+		vk::SampleCountFlags counts =
+			physicalDeviceProperties.limits.framebufferColorSampleCounts &
+			physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+		supportedMsaaSamples = counts;
 		if (counts & vk::SampleCountFlagBits::e64)
 		{
 			return vk::SampleCountFlagBits::e64;
@@ -622,8 +638,10 @@ private:
 
 		std::vector<vk::PresentModeKHR> availablePresentModes =
 			physicalDevice.getSurfacePresentModesKHR(*surface);
-		presentMode =
-			chooseSwapPresentMode(availablePresentModes);
+		if (!std::ranges::any_of(availablePresentModes, [this](auto m)
+								 { return m == pendingPresentMode; }))
+			pendingPresentMode = chooseSwapPresentMode(availablePresentModes);
+		presentMode = pendingPresentMode;
 
 		vk::SwapchainCreateInfoKHR swapChainCreateInfo{
 			.surface = *surface,
@@ -822,8 +840,7 @@ private:
 			.depthBiasSlopeFactor = 1.0f,
 			.lineWidth = 1.0f};
 		vk::PipelineMultisampleStateCreateInfo multisampling{
-			.rasterizationSamples = msaaSamples,
-			.sampleShadingEnable = vk::False};
+			.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False};
 
 		vk::PipelineColorBlendAttachmentState colorBlendAttachment{
 			.blendEnable = vk::False,
@@ -993,8 +1010,14 @@ private:
 	{
 		vk::Format colorFormat = swapChainSurfaceFormat.format;
 
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage, colorImageMemory);
-		colorImageView = createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples,
+					colorFormat, vk::ImageTiling::eOptimal,
+					vk::ImageUsageFlagBits::eTransientAttachment |
+						vk::ImageUsageFlagBits::eColorAttachment,
+					vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
+					colorImageMemory);
+		colorImageView = createImageView(colorImage, colorFormat,
+										 vk::ImageAspectFlagBits::eColor, 1);
 	}
 
 	// Creates the depth image and its view. The format is chosen at runtime
@@ -1003,8 +1026,8 @@ private:
 	void createDepthResources()
 	{
 		vk::Format depthFormat = findDepthFormat();
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat,
-					vk::ImageTiling::eOptimal,
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples,
+					depthFormat, vk::ImageTiling::eOptimal,
 					vk::ImageUsageFlagBits::eDepthStencilAttachment,
 					vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
 					depthImageMemory);
@@ -1021,8 +1044,8 @@ private:
 	// Allocates a VkImage and binds it to a new VkDeviceMemory allocation.
 	// All image creation goes through here: texture, depth, color MSAA.
 	void createImage(uint32_t width, uint32_t height, uint32_t mipLevels,
-					 vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling,
-					 vk::ImageUsageFlags usage,
+					 vk::SampleCountFlagBits numSamples, vk::Format format,
+					 vk::ImageTiling tiling, vk::ImageUsageFlags usage,
 					 vk::MemoryPropertyFlags properties, vk::raii::Image &image,
 					 vk::raii::DeviceMemory &imageMemory)
 	{
@@ -1241,8 +1264,8 @@ private:
 		stagingBufferMemory.unmapMemory();
 
 		stbi_image_free(pixels);
-		createImage(texWidth, texHeight, mipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Srgb,
-					vk::ImageTiling::eOptimal,
+		createImage(texWidth, texHeight, mipLevels, vk::SampleCountFlagBits::e1,
+					vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
 					vk::ImageUsageFlagBits::eTransferSrc |
 						vk::ImageUsageFlagBits::eTransferDst |
 						vk::ImageUsageFlagBits::eSampled,
@@ -1253,7 +1276,8 @@ private:
 		copyBufferToImage(stagingBuffer, textureImage,
 						  static_cast<uint32_t>(texWidth),
 						  static_cast<uint32_t>(texHeight));
-		generateMipmaps(textureImage, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
+		generateMipmaps(textureImage, vk::Format::eR8G8B8A8Srgb, texWidth,
+						texHeight, mipLevels);
 	}
 
 	// Generates all mip levels after mip 0 has been uploaded. For each level i:
@@ -1262,13 +1286,19 @@ private:
 	//   3. Barrier: transition level i-1 → ShaderReadOnly (done with it)
 	// After the loop, the last level is transitioned to ShaderReadOnly separately
 	// (it was never used as a blit source).
-	void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
+	void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat,
+						 int32_t texWidth, int32_t texHeight,
+						 uint32_t mipLevels)
 	{
-		vk::FormatProperties props = physicalDevice.getFormatProperties(imageFormat);
-		if (!(props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
-			throw std::runtime_error("texture image format does not support linear blitting!");
+		vk::FormatProperties props =
+			physicalDevice.getFormatProperties(imageFormat);
+		if (!(props.optimalTilingFeatures &
+			  vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+			throw std::runtime_error(
+				"texture image format does not support linear blitting!");
 
-		std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = beginSingleTimeCommands();
+		std::unique_ptr<vk::raii::CommandBuffer> commandBuffer =
+			beginSingleTimeCommands();
 
 		vk::ImageMemoryBarrier barrier{
 			.srcAccessMask = vk::AccessFlagBits::eTransferWrite,
@@ -1293,21 +1323,33 @@ private:
 			barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
 			barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
 			barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
-			commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, barrier);
+			commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+										   vk::PipelineStageFlagBits::eTransfer, {},
+										   {}, {}, barrier);
 			vk::ArrayWrapper1D<vk::Offset3D, 2> offsets, dstOffsets;
 			offsets[0] = vk::Offset3D(0, 0, 0);
 			offsets[1] = vk::Offset3D(mipWidth, mipHeight, 1);
 			dstOffsets[0] = vk::Offset3D(0, 0, 0);
-			dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1);
-			vk::ImageBlit blit = {.srcSubresource = {}, .srcOffsets = offsets, .dstSubresource = {}, .dstOffsets = dstOffsets};
-			blit.srcSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i - 1, 0, 1);
-			blit.dstSubresource = vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i, 0, 1);
-			commandBuffer->blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal, {blit}, vk::Filter::eLinear);
+			dstOffsets[1] = vk::Offset3D(mipWidth > 1 ? mipWidth / 2 : 1,
+										 mipHeight > 1 ? mipHeight / 2 : 1, 1);
+			vk::ImageBlit blit = {.srcSubresource = {},
+								  .srcOffsets = offsets,
+								  .dstSubresource = {},
+								  .dstOffsets = dstOffsets};
+			blit.srcSubresource = vk::ImageSubresourceLayers(
+				vk::ImageAspectFlagBits::eColor, i - 1, 0, 1);
+			blit.dstSubresource =
+				vk::ImageSubresourceLayers(vk::ImageAspectFlagBits::eColor, i, 0, 1);
+			commandBuffer->blitImage(image, vk::ImageLayout::eTransferSrcOptimal,
+									 image, vk::ImageLayout::eTransferDstOptimal,
+									 {blit}, vk::Filter::eLinear);
 			barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
 			barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 			barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
 			barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-			commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+			commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+										   vk::PipelineStageFlagBits::eFragmentShader,
+										   {}, {}, {}, barrier);
 			if (mipWidth > 1)
 				mipWidth /= 2;
 			if (mipHeight > 1)
@@ -1321,7 +1363,9 @@ private:
 		barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
 		barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 
-		commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+		commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+									   vk::PipelineStageFlagBits::eFragmentShader,
+									   {}, {}, {}, barrier);
 
 		endSingleTimeCommands(*commandBuffer);
 	}
@@ -1595,17 +1639,26 @@ private:
 	}
 
 	/* Architecture of the drawFrame function:
-																																																																	CPU GPU | |
-																																																																	waitForFences
+																																																																																																																																	CPU GPU | |
+																																																																																																																																	waitForFences
 	   ◄──────────────── fence signaled (prev frame done) | | acquireNextImage | |
 	   | reset
 	   + record               │ (GPU still busy on other slot) | | queue.submit
 	   ─────────────────► starts rendering |          wait on semaphore |
-																																																																	queue.present
+																																																																																																																																	queue.present
 	   ◄─────────────── renderFinished semaphore signaled | | frameIndex++ |
 	*/
 	void drawFrame()
 	{
+		if (pendingMsaaSamples != msaaSamples)
+		{
+			msaaSamples = pendingMsaaSamples;
+			rebuildMsaa();
+		}
+
+		if (pendingPresentMode != presentMode)
+			recreateSwapChain();
+
 		// Wait for the previous frame to finish rendering (CPU)
 		auto fenceResult =
 			device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
@@ -1641,18 +1694,7 @@ private:
 
 		commandBuffers[frameIndex].reset();
 
-		ImGui_ImplVulkan_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
-
-		ImGui::Begin("Info");
-		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-		ImGui::Text("Frame time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
-		ImGui::Text("Present mode: %s", vk::to_string(presentMode).c_str());
-
-		ImGui::End();
-
-		ImGui::Render();
+		drawImGui();
 
 		// Record the next rendering command
 		recordCommandBuffer(imageIndex);
@@ -1766,16 +1808,22 @@ private:
 		auto &commandBuffer = commandBuffers[frameIndex];
 		commandBuffer.begin({});
 
-		// Transition MSAA color image to color attachment optimal (render target)
-		transition_image_layout(
-			*colorImage, vk::ImageLayout::eUndefined,
-			vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
-			vk::AccessFlagBits2::eColorAttachmentWrite,			// dstAccessMask
-			vk::PipelineStageFlagBits2::eTopOfPipe,				// srcStageMask
-			vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStageMask
-			vk::ImageAspectFlagBits::eColor);
+		bool msaaEnabled = msaaSamples != vk::SampleCountFlagBits::e1;
 
-		// Transition swapchain image to color attachment optimal (resolve target)
+		if (msaaEnabled)
+		{
+			// Transition MSAA color image to color attachment optimal (render target)
+			transition_image_layout(
+				*colorImage, vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
+				vk::AccessFlagBits2::eColorAttachmentWrite,			// dstAccessMask
+				vk::PipelineStageFlagBits2::eTopOfPipe,				// srcStageMask
+				vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStageMask
+				vk::ImageAspectFlagBits::eColor);
+		}
+
+		// Transition swapchain image to color attachment optimal (resolve target,
+		// or direct render target when no MSAA)
 		transition_image_layout(
 			swapChainImages[imageIndex], vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
@@ -1798,18 +1846,32 @@ private:
 		vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
 		vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 
-		// The color attachment renders into the MSAA image and resolves the
-		// averaged result into the swapchain image at the end of the pass.
-		// storeOp is DontCare because the MSAA image itself is transient.
-		vk::RenderingAttachmentInfo attachmentInfo{
-			.imageView = *colorImageView,
-			.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-			.resolveMode = vk::ResolveModeFlagBits::eAverage,
-			.resolveImageView = *swapChainImageViews[imageIndex],
-			.resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-			.loadOp = vk::AttachmentLoadOp::eClear,
-			.storeOp = vk::AttachmentStoreOp::eDontCare,
-			.clearValue = clearColor};
+		// With MSAA: render into the MSAA color image, resolve into the swapchain
+		// image at the end of the pass (storeOp DontCare since the MSAA image is
+		// transient). Without MSAA: render directly into the swapchain image.
+		vk::RenderingAttachmentInfo attachmentInfo =
+			msaaEnabled
+				? vk::RenderingAttachmentInfo{.imageView = *colorImageView,
+											  .imageLayout = vk::ImageLayout::
+												  eColorAttachmentOptimal,
+											  .resolveMode =
+												  vk::ResolveModeFlagBits::eAverage,
+											  .resolveImageView =
+												  *swapChainImageViews[imageIndex],
+											  .resolveImageLayout =
+												  vk::ImageLayout::
+													  eColorAttachmentOptimal,
+											  .loadOp =
+												  vk::AttachmentLoadOp::eClear,
+											  .storeOp =
+												  vk::AttachmentStoreOp::eDontCare,
+											  .clearValue = clearColor}
+				: vk::RenderingAttachmentInfo{
+					  .imageView = *swapChainImageViews[imageIndex],
+					  .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+					  .loadOp = vk::AttachmentLoadOp::eClear,
+					  .storeOp = vk::AttachmentStoreOp::eStore,
+					  .clearValue = clearColor};
 
 		vk::RenderingAttachmentInfo depthAttachmentInfo = {
 			.imageView = depthImageView,
@@ -1852,11 +1914,24 @@ private:
 		// End rendering
 		commandBuffer.endRendering();
 
+		vk::MemoryBarrier2 barrier{
+			.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+			.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead |
+							 vk::AccessFlagBits2::eColorAttachmentWrite,
+		};
+		commandBuffer.pipelineBarrier2(vk::DependencyInfo{
+			.memoryBarrierCount = 1,
+			.pMemoryBarriers = &barrier,
+		});
+
 		// second pass: ImGui renders directly into swapchain image
 		vk::RenderingAttachmentInfo imguiColorAttachment{
 			.imageView = *swapChainImageViews[imageIndex],
 			.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-			.loadOp = vk::AttachmentLoadOp::eLoad, // load, don't clear — preserve your scene
+			.loadOp = vk::AttachmentLoadOp::eLoad, // load, don't clear — preserve
+												   // your scene
 			.storeOp = vk::AttachmentStoreOp::eStore};
 
 		vk::RenderingInfo imguiRenderingInfo{
@@ -1940,8 +2015,27 @@ private:
 
 		createSwapChain();
 		createImageViews();
+		ImGui_ImplVulkan_SetMinImageCount(
+			static_cast<uint32_t>(swapChainImages.size()));
 		createDepthResources();
 		createColorResources();
+	}
+
+	// Rebuilds the graphics pipeline and MSAA/depth attachments after a
+	// runtime change to msaaSamples. Must be called with no frames in flight.
+	void rebuildMsaa()
+	{
+		device.waitIdle();
+		colorImageView = nullptr;
+		colorImage = nullptr;
+		colorImageMemory = nullptr;
+		depthImageView = nullptr;
+		depthImage = nullptr;
+		depthImageMemory = nullptr;
+		graphicsPipeline = nullptr;
+		createDepthResources();
+		createColorResources();
+		createGraphicsPipeline();
 	}
 
 	// Destroys all resources that are tied to the swapchain extent.
@@ -2000,18 +2094,80 @@ private:
 		glfwTerminate();
 	}
 
+	void drawImGui()
+	{
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::GetIO().DisplaySize = ImVec2(
+			static_cast<float>(swapChainExtent.width),
+			static_cast<float>(swapChainExtent.height));
+
+		ImGui::Begin("Info");
+
+		// Performance
+		ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+		ImGui::Text("Frame time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+
+		ImGui::Separator();
+
+		// Display info
+		ImGui::Text("Resolution: %ux%u", swapChainExtent.width,
+					swapChainExtent.height);
+		ImGui::Text("Device: %s", physicalDevice.getProperties().deviceName.data());
+		ImGui::Text("Mip levels: %u", mipLevels);
+
+		ImGui::Separator();
+
+		// V-Sync toggle: eFifo = on, eMailbox = off
+		bool vsync = (pendingPresentMode == vk::PresentModeKHR::eFifo);
+		if (ImGui::Checkbox("V-Sync", &vsync))
+			pendingPresentMode =
+				vsync ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eMailbox;
+
+		// MSAA combo — lists all power-of-two counts up to hardware max
+		static const vk::SampleCountFlagBits kSampleCounts[] = {
+			vk::SampleCountFlagBits::e1,
+			vk::SampleCountFlagBits::e2,
+			vk::SampleCountFlagBits::e4,
+			vk::SampleCountFlagBits::e8,
+			vk::SampleCountFlagBits::e16,
+			vk::SampleCountFlagBits::e32,
+			vk::SampleCountFlagBits::e64,
+		};
+		if (ImGui::BeginCombo("MSAA", vk::to_string(pendingMsaaSamples).c_str()))
+		{
+			for (auto count : kSampleCounts)
+			{
+				if (!(supportedMsaaSamples & count))
+					continue;
+				bool selected = (count == pendingMsaaSamples);
+				if (ImGui::Selectable(vk::to_string(count).c_str(), selected))
+					pendingMsaaSamples = count;
+				if (selected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+
+		ImGui::End();
+
+		ImGui::Render();
+	}
+
 	void imGuiInit()
 	{
 		// ImGui needs its own descriptor pool
-		vk::DescriptorPoolSize pool_size(vk::DescriptorType::eCombinedImageSampler, 1);
+		vk::DescriptorPoolSize pool_size(vk::DescriptorType::eCombinedImageSampler,
+										 1);
 		vk::DescriptorPoolCreateInfo pool_info = {
 			.sType = vk::StructureType::eDescriptorPoolCreateInfo,
 			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 			.maxSets = 1,
 			.poolSizeCount = 1,
 			.pPoolSizes = &pool_size};
-		imguiDescriptorPool = vk::raii::DescriptorPool(
-			device, pool_info);
+		imguiDescriptorPool = vk::raii::DescriptorPool(device, pool_info);
 
 		IMGUI_CHECKVERSION();
 		ImGui::CreateContext();
