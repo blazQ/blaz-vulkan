@@ -1667,13 +1667,15 @@ private:
 
 	void imGuiInit()
 	{
-		// ImGui needs its own descriptor pool
+		// ImGui needs its own descriptor pool.
+		// imgui 1.92+ requires at least IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE (8)
+		// descriptors per font atlas; 1 was too small and caused silent allocation failures.
 		vk::DescriptorPoolSize pool_size(vk::DescriptorType::eCombinedImageSampler,
-										 1);
+										 IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE);
 		vk::DescriptorPoolCreateInfo pool_info = {
 			.sType = vk::StructureType::eDescriptorPoolCreateInfo,
 			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-			.maxSets = 1,
+			.maxSets = IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE,
 			.poolSizeCount = 1,
 			.pPoolSizes = &pool_size};
 		imguiDescriptorPool = vk::raii::DescriptorPool(vulkanDevice->getLogicalDevice(), pool_info);
