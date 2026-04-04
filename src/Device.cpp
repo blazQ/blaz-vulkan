@@ -279,6 +279,66 @@ vk::SampleCountFlagBits Device::getMaxUsableSampleCount()
     return vk::SampleCountFlagBits::e1;
 }
 
+uint32_t Device::findMemoryType(uint32_t typeFilter,
+                                vk::MemoryPropertyFlags properties)
+{
+    vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+    {
+        if ((typeFilter & (1 << i)) &&
+            (memProperties.memoryTypes[i].propertyFlags & properties) ==
+                properties)
+        {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
+vk::Format Device::findSupportedFormat(const std::vector<vk::Format> &candidates,
+                                       vk::ImageTiling tiling,
+                                       vk::FormatFeatureFlags features)
+{
+    for (const auto format : candidates)
+    {
+        vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+        if (tiling == vk::ImageTiling::eLinear &&
+            (props.linearTilingFeatures & features) == features)
+        {
+            return format;
+        }
+        if (tiling == vk::ImageTiling::eOptimal &&
+            (props.optimalTilingFeatures & features) == features)
+        {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("failed to find supported format!");
+}
+
+vk::Format Device::findDepthFormat()
+{
+    return findSupportedFormat(
+        {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint,
+         vk::Format::eD24UnormS8Uint},
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+}
+
+vk::raii::ImageView Device::createImageView(vk::Image image, vk::Format format,
+                                               vk::ImageAspectFlags aspectFlags,
+                                               uint32_t mipLevels)
+{
+    vk::ImageViewCreateInfo viewInfo{
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {aspectFlags, 0, mipLevels, 0, 1}};
+    return vk::raii::ImageView(device, viewInfo);
+}
+
 std::vector<const char *> Device::getRequiredExtensions()
 {
     uint32_t glfwExtensionCount = 0;

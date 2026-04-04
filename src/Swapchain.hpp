@@ -32,9 +32,6 @@ private:
 
     void createSwapChain(vk::PresentModeKHR preferredMode);
     void createImageViews();
-    vk::raii::ImageView createImageView(vk::Image image, vk::Format format,
-                                        vk::ImageAspectFlags aspectFlags,
-                                        uint32_t mipLevels);
 
     static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
     static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const& availableFormats);

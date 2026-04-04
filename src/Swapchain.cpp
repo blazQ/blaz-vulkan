@@ -129,19 +129,7 @@ void Swapchain::createImageViews()
     for (uint32_t i = 0; i < swapChainImages.size(); i++)
     {
         swapChainImageViews.push_back(
-            createImageView(swapChainImages[i], swapChainSurfaceFormat.format,
+            device.createImageView(swapChainImages[i], swapChainSurfaceFormat.format,
                             vk::ImageAspectFlagBits::eColor, 1));
     }
-}
-
-vk::raii::ImageView Swapchain::createImageView(vk::Image image, vk::Format format,
-                                               vk::ImageAspectFlags aspectFlags,
-                                               uint32_t mipLevels)
-{
-    vk::ImageViewCreateInfo viewInfo{
-        .image = image,
-        .viewType = vk::ImageViewType::e2D,
-        .format = format,
-        .subresourceRange = {aspectFlags, 0, mipLevels, 0, 1}};
-    return vk::raii::ImageView(device.getLogicalDevice(), viewInfo);
 }

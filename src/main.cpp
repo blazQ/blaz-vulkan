@@ -528,7 +528,7 @@ private:
 						vk::ImageUsageFlagBits::eColorAttachment,
 					vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
 					colorImageMemory);
-		colorImageView = createImageView(colorImage, colorFormat,
+		colorImageView = vulkanDevice->createImageView(colorImage, colorFormat,
 										 vk::ImageAspectFlagBits::eColor, 1);
 	}
 
@@ -543,7 +543,7 @@ private:
 					vk::ImageUsageFlagBits::eDepthStencilAttachment,
 					vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
 					depthImageMemory);
-		depthImageView = createImageView(depthImage, depthFormat,
+		depthImageView = vulkanDevice->createImageView(depthImage, depthFormat,
 										 vk::ImageAspectFlagBits::eDepth, 1);
 	}
 
@@ -579,23 +579,9 @@ private:
 		vk::MemoryAllocateInfo allocInfo{
 			.allocationSize = memRequirements.size,
 			.memoryTypeIndex =
-				findMemoryType(memRequirements.memoryTypeBits, properties)};
+				vulkanDevice->findMemoryType(memRequirements.memoryTypeBits, properties)};
 		imageMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), allocInfo);
 		image.bindMemory(imageMemory, 0);
-	}
-
-	// Creates an ImageView for a given image. Used for depth, MSAA color, and
-	// texture images owned by the Application.
-	vk::raii::ImageView createImageView(vk::Image image, vk::Format format,
-										vk::ImageAspectFlags aspectFlags,
-										uint32_t mipLevels)
-	{
-		vk::ImageViewCreateInfo viewInfo{
-			.image = image,
-			.viewType = vk::ImageViewType::e2D,
-			.format = format,
-			.subresourceRange = {aspectFlags, 0, mipLevels, 0, 1}};
-		return vk::raii::ImageView(vulkanDevice->getLogicalDevice(), viewInfo);
 	}
 
 	// Allocates a VkBuffer and binds it to a new VkDeviceMemory allocation.
@@ -613,30 +599,9 @@ private:
 		vk::MemoryAllocateInfo memoryAllocateInfo{
 			.allocationSize = memRequirements.size,
 			.memoryTypeIndex =
-				findMemoryType(memRequirements.memoryTypeBits, properties)};
+				vulkanDevice->findMemoryType(memRequirements.memoryTypeBits, properties)};
 		bufferMemory = vk::raii::DeviceMemory(vulkanDevice->getLogicalDevice(), memoryAllocateInfo);
 		buffer.bindMemory(*bufferMemory, 0);
-	}
-
-	// Searches the GPU's memory heaps for one that satisfies both the type
-	// filter (which heaps the resource can use) and the property flags (e.g.
-	// device-local for fast GPU access, or host-visible for CPU writes).
-	uint32_t findMemoryType(uint32_t typeFilter,
-							vk::MemoryPropertyFlags properties)
-	{
-		vk::PhysicalDeviceMemoryProperties memProperties =
-			vulkanDevice->getPhysicalDevice().getMemoryProperties();
-		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-		{
-			if ((typeFilter & (1 << i)) &&
-				(memProperties.memoryTypes[i].propertyFlags & properties) ==
-					properties)
-			{
-				return i;
-			}
-		}
-
-		throw std::runtime_error("failed to find suitable memory type!");
 	}
 
 	// Allocates and begins a one-time-submit command buffer. Used for upload
@@ -900,7 +865,7 @@ private:
 	void createTextureImageView()
 	{
 		textureImageView =
-			createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb,
+			vulkanDevice->createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb,
 							vk::ImageAspectFlagBits::eColor, mipLevels);
 	}
 
