@@ -5,6 +5,8 @@ option(ENABLE_CPP20_MODULE "Use Vulkan C++20 module (import vulkan_hpp) instead 
 
 if(ENABLE_CPP20_MODULE)
     set(CMAKE_CXX_SCAN_FOR_MODULES ON)
+else()
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 endif()
 
 find_package(glfw3 REQUIRED)
@@ -55,8 +57,9 @@ add_custom_command(
 add_custom_target(shaders DEPENDS ${CMAKE_BINARY_DIR}/shaders/slang.spv)
 
 # Copy textures and models to build directory at configure time
-file(COPY ${CMAKE_SOURCE_DIR}/textures DESTINATION ${CMAKE_BINARY_DIR})
-file(COPY ${CMAKE_SOURCE_DIR}/models DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/assets/textures DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/assets/models DESTINATION ${CMAKE_BINARY_DIR})
+file(COPY ${CMAKE_SOURCE_DIR}/assets/scenes DESTINATION ${CMAKE_BINARY_DIR})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
@@ -73,7 +76,8 @@ set_target_properties(main PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 target_link_libraries(main PRIVATE Vulkan::cppm glfw)
-target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends
+    ${CMAKE_SOURCE_DIR}/extern/nlohmann-json/include)
 target_compile_definitions(main PRIVATE VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS)
 add_dependencies(main shaders)
 

@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
@@ -55,11 +57,8 @@ windows, contexts and surfaces, receiving input and events. */
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 
-const std::string MODEL_PATH = "models/viking_room.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
-
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
+const std::string SCENE_PATH   = "scenes/scene.json";
 
 /* This is used to make the drawing process more efficient by avoiding the CPU
 being idle while the GPU renders frame N. By having multiple frames in flight,
@@ -89,6 +88,16 @@ struct Vertex
 				vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,
 													offsetof(Vertex, texCoord))};
 	}
+};
+
+struct Renderable {
+    vk::raii::Buffer         vertexBuffer       = nullptr;
+    vk::raii::DeviceMemory   vertexBufferMemory = nullptr;
+    vk::raii::Buffer         indexBuffer        = nullptr;
+    vk::raii::DeviceMemory   indexBufferMemory  = nullptr;
+    uint32_t                 indexCount         = 0;
+
+    glm::mat4                modelMatrix        = glm::mat4(1.0f);
 };
 
 class HelloTriangleApplication
@@ -162,13 +171,8 @@ private:
 	vk::raii::Sampler textureSampler = nullptr;
 
 	// --- Scene geometry ---
-	// CPU-side data, uploaded once to GPU-local buffers.
-	std::vector<Vertex> vertices;
-	std::vector<uint32_t> indices;
-	vk::raii::Buffer vertexBuffer = nullptr;
-	vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-	vk::raii::Buffer indexBuffer = nullptr;
-	vk::raii::DeviceMemory indexBufferMemory = nullptr;
+	// One Renderable per object; each owns its own GPU buffers and model matrix.
+	std::vector<Renderable> renderables;
 
 	// --- Uniform buffers (one per frame in flight) ---
 	// Written by the CPU each frame to pass transform matrices to the shader.
@@ -196,7 +200,6 @@ private:
 	// Data layout of the uniform buffer as the shader sees it.
 	struct UniformBufferObject
 	{
-		glm::mat4 model;
 		glm::mat4 view;
 		glm::mat4 proj;
 	};
@@ -254,9 +257,7 @@ private:
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
-		loadModel();
-		createVertexBuffer();
-		createIndexBuffer();
+		loadScene();
 		createUniformBuffers();
 		createDescriptorPool();
 		createDescriptorSets();
@@ -364,10 +365,15 @@ private:
 			.logicOp = vk::LogicOp::eCopy,
 			.attachmentCount = 1,
 			.pAttachments = &colorBlendAttachment};
+		vk::PushConstantRange pushConstantRange{
+			.stageFlags = vk::ShaderStageFlagBits::eVertex,
+			.offset = 0,
+			.size = sizeof(glm::mat4)};
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
 			.setLayoutCount = 1,
 			.pSetLayouts = &*descriptorSetLayout,
-			.pushConstantRangeCount = 0};
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &pushConstantRange};
 
 		pipelineLayout = vk::raii::PipelineLayout(vulkanDevice->getLogicalDevice(), pipelineLayoutInfo);
 		vk::Format depthFormat = findDepthFormat();
@@ -529,7 +535,7 @@ private:
 					vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
 					colorImageMemory);
 		colorImageView = vulkanDevice->createImageView(colorImage, colorFormat,
-										 vk::ImageAspectFlagBits::eColor, 1);
+													   vk::ImageAspectFlagBits::eColor, 1);
 	}
 
 	// Creates the depth image and its view. The format is chosen at runtime
@@ -544,7 +550,7 @@ private:
 					vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
 					depthImageMemory);
 		depthImageView = vulkanDevice->createImageView(depthImage, depthFormat,
-										 vk::ImageAspectFlagBits::eDepth, 1);
+													   vk::ImageAspectFlagBits::eDepth, 1);
 	}
 
 	// =========================================================================
@@ -866,7 +872,7 @@ private:
 	{
 		textureImageView =
 			vulkanDevice->createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb,
-							vk::ImageAspectFlagBits::eColor, mipLevels);
+										  vk::ImageAspectFlagBits::eColor, mipLevels);
 	}
 
 	// Creates the sampler that describes how the fragment shader reads the
@@ -895,41 +901,65 @@ private:
 		textureSampler = vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
 	}
 
-	// Parses an OBJ file and fills the vertices/indices arrays.
-	// All vertices start with white color (1,1,1); texcoords flip the V axis
-	// because OBJ uses bottom-left origin while Vulkan uses top-left.
-	void loadModel()
+	// =========================================================================
+	// SECTION 9b: PROCEDURAL GEOMETRY
+	// Hard-coded vertex/index data for built-in mesh types.
+	// Each mesh is defined in local object space; the model matrix (push
+	// constant) places it in world space at draw time.
+	// =========================================================================
+
+	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube()
 	{
-		tinyobj::attrib_t attrib;
-		std::vector<tinyobj::shape_t> shapes;
-		std::vector<tinyobj::material_t> materials;
-		std::string warn, err;
-
-		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-							  MODEL_PATH.c_str()))
-		{
-			throw std::runtime_error(warn + err);
+		std::vector<Vertex> verts = {
+			// +Z face (front)
+			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {0,0}},
+			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {1,0}},
+			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {1,1}},
+			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {0,1}},
+			// -Z face (back)
+			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
+			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
+			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
+			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			// +X face (right)
+			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {0,0}},
+			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
+			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
+			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {0,1}},
+			// -X face (left)
+			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
+			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {1,0}},
+			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {1,1}},
+			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			// +Y face (top)
+			{{-0.5f,  0.5f,  0.5f}, {1,1,1}, {0,0}},
+			{{ 0.5f,  0.5f,  0.5f}, {1,1,1}, {1,0}},
+			{{ 0.5f,  0.5f, -0.5f}, {1,1,1}, {1,1}},
+			{{-0.5f,  0.5f, -0.5f}, {1,1,1}, {0,1}},
+			// -Y face (bottom)
+			{{-0.5f, -0.5f, -0.5f}, {1,1,1}, {0,0}},
+			{{ 0.5f, -0.5f, -0.5f}, {1,1,1}, {1,0}},
+			{{ 0.5f, -0.5f,  0.5f}, {1,1,1}, {1,1}},
+			{{-0.5f, -0.5f,  0.5f}, {1,1,1}, {0,1}},
+		};
+		std::vector<uint32_t> idxs;
+		for (uint32_t f = 0; f < 6; ++f) {
+			uint32_t b = f * 4;
+			idxs.insert(idxs.end(), {b,b+1,b+2, b,b+2,b+3});
 		}
+		return {verts, idxs};
+	}
 
-		for (const auto &shape : shapes)
-		{
-			for (const auto &index : shape.mesh.indices)
-			{
-				Vertex vertex{};
-				vertex.pos = {attrib.vertices[3 * index.vertex_index + 0],
-							  attrib.vertices[3 * index.vertex_index + 1],
-							  attrib.vertices[3 * index.vertex_index + 2]};
-
-				vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0],
-								   1.0f -
-									   attrib.texcoords[2 * index.texcoord_index + 1]};
-
-				vertex.color = {1.0f, 1.0f, 1.0f};
-
-				vertices.push_back(vertex);
-				indices.push_back(indices.size());
-			}
-		}
+	static std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane()
+	{
+		std::vector<Vertex> verts = {
+			{{-2.0f, -2.0f, 0.0f}, {1,0.5,1}, {0,0}},
+			{{ 2.0f, -2.0f, 0.0f}, {1,0.5,1}, {1,0}},
+			{{ 2.0f,  2.0f, 0.0f}, {1,0.5,1}, {1,1}},
+			{{-2.0f,  2.0f, 0.0f}, {1,0.5,1}, {0,1}},
+		};
+		std::vector<uint32_t> idxs = {0,1,2, 0,2,3};
+		return {verts, idxs};
 	}
 
 	// =========================================================================
@@ -939,55 +969,72 @@ private:
 	// buffers are persistently mapped and updated every frame.
 	// =========================================================================
 
-	// Creates a host-visible staging buffer, copies vertices into it, then
-	// copies from the staging buffer into a device-local vertex buffer.
-	void createVertexBuffer()
+	// Uploads geometry into a Renderable's GPU buffers via staging buffers.
+	void uploadRenderable(Renderable &r, const std::vector<Vertex> &verts,
+						  const std::vector<uint32_t> &idxs)
 	{
-		vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-		vk::raii::Buffer stagingBuffer({});
-		vk::raii::DeviceMemory stagingBufferMemory({});
-
-		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-					 vk::MemoryPropertyFlagBits::eHostVisible |
-						 vk::MemoryPropertyFlagBits::eHostCoherent,
-					 stagingBuffer, stagingBufferMemory);
-
-		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, vertices.data(), bufferSize);
-		stagingBufferMemory.unmapMemory();
-
-		createBuffer(bufferSize,
-					 vk::BufferUsageFlagBits::eTransferDst |
-						 vk::BufferUsageFlagBits::eVertexBuffer,
-					 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer,
-					 vertexBufferMemory);
-
-		copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+		// Vertex buffer
+		{
+			vk::DeviceSize size = sizeof(verts[0]) * verts.size();
+			vk::raii::Buffer staging({});
+			vk::raii::DeviceMemory stagingMem({});
+			createBuffer(size, vk::BufferUsageFlagBits::eTransferSrc,
+						 vk::MemoryPropertyFlagBits::eHostVisible |
+							 vk::MemoryPropertyFlagBits::eHostCoherent,
+						 staging, stagingMem);
+			void *data = stagingMem.mapMemory(0, size);
+			memcpy(data, verts.data(), size);
+			stagingMem.unmapMemory();
+			createBuffer(size,
+						 vk::BufferUsageFlagBits::eTransferDst |
+							 vk::BufferUsageFlagBits::eVertexBuffer,
+						 vk::MemoryPropertyFlagBits::eDeviceLocal,
+						 r.vertexBuffer, r.vertexBufferMemory);
+			copyBuffer(staging, r.vertexBuffer, size);
+		}
+		// Index buffer
+		{
+			vk::DeviceSize size = sizeof(idxs[0]) * idxs.size();
+			vk::raii::Buffer staging({});
+			vk::raii::DeviceMemory stagingMem({});
+			createBuffer(size, vk::BufferUsageFlagBits::eTransferSrc,
+						 vk::MemoryPropertyFlagBits::eHostVisible |
+							 vk::MemoryPropertyFlagBits::eHostCoherent,
+						 staging, stagingMem);
+			void *data = stagingMem.mapMemory(0, size);
+			memcpy(data, idxs.data(), size);
+			stagingMem.unmapMemory();
+			createBuffer(size,
+						 vk::BufferUsageFlagBits::eTransferDst |
+							 vk::BufferUsageFlagBits::eIndexBuffer,
+						 vk::MemoryPropertyFlagBits::eDeviceLocal,
+						 r.indexBuffer, r.indexBufferMemory);
+			copyBuffer(staging, r.indexBuffer, size);
+		}
+		r.indexCount = static_cast<uint32_t>(idxs.size());
 	}
 
-	// Same pattern as createVertexBuffer but for the index buffer.
-	void createIndexBuffer()
+	// Reads scene.json, instantiates a Renderable for each listed object.
+	void loadScene()
 	{
-		vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-		vk::raii::Buffer stagingBuffer({});
-		vk::raii::DeviceMemory stagingBufferMemory({});
+		std::ifstream f(SCENE_PATH);
+		if (!f.is_open())
+			throw std::runtime_error("failed to open scene file: " + SCENE_PATH);
 
-		createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-					 vk::MemoryPropertyFlagBits::eHostVisible |
-						 vk::MemoryPropertyFlagBits::eHostCoherent,
-					 stagingBuffer, stagingBufferMemory);
+		nlohmann::json scene = nlohmann::json::parse(f);
 
-		void *data = stagingBufferMemory.mapMemory(0, bufferSize);
-		memcpy(data, indices.data(), (size_t)bufferSize);
-		stagingBufferMemory.unmapMemory();
+		for (const auto &obj : scene["objects"])
+		{
+			std::string mesh = obj["mesh"];
+			glm::vec3 pos = {obj["position"][0], obj["position"][1], obj["position"][2]};
 
-		createBuffer(bufferSize,
-					 vk::BufferUsageFlagBits::eTransferDst |
-						 vk::BufferUsageFlagBits::eIndexBuffer,
-					 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer,
-					 indexBufferMemory);
+			auto [verts, idxs] = (mesh == "cube") ? makeCube() : makePlane();
 
-		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+			Renderable r;
+			r.modelMatrix = glm::translate(glm::mat4(1.0f), pos);
+			uploadRenderable(r, verts, idxs);
+			renderables.push_back(std::move(r));
+		}
 	}
 
 	// Creates one host-visible, persistently mapped uniform buffer per
@@ -1269,8 +1316,6 @@ private:
 						 .count();
 
 		UniformBufferObject ubo{};
-		ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f),
-						   glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
 						  glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f),
@@ -1386,9 +1431,6 @@ private:
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics,
 								   *graphicsPipeline);
 
-		commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
-		commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
-		// Set dynamic viewport and scissor
 		commandBuffer.setViewport(
 			0,
 			vk::Viewport{0.0f, 0.0f, static_cast<float>(swapchain->getExtent().width),
@@ -1399,8 +1441,20 @@ private:
 		commandBuffers[frameIndex].bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics, pipelineLayout, 0,
 			*descriptorSets[frameIndex], nullptr);
-		// Draw the triangle
-		commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
+
+		for (const auto &r : renderables)
+		{
+			commandBuffer.pushConstants2(
+				vk::PushConstantsInfo{}
+					.setLayout(*pipelineLayout)
+					.setStageFlags(vk::ShaderStageFlagBits::eVertex)
+					.setOffset(0)
+					.setSize(sizeof(glm::mat4))
+					.setPValues(&r.modelMatrix));
+			commandBuffer.bindVertexBuffers(0, *r.vertexBuffer, {0});
+			commandBuffer.bindIndexBuffer(*r.indexBuffer, 0, vk::IndexType::eUint32);
+			commandBuffer.drawIndexed(r.indexCount, 1, 0, 0, 0);
+		}
 
 		// End rendering
 		commandBuffer.endRendering();
@@ -1537,6 +1591,8 @@ private:
 	{
 		cleanupSwapChain();
 
+		renderables.clear();
+
 		ImGui_ImplVulkan_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
@@ -1556,10 +1612,6 @@ private:
 		imguiDescriptorPool = nullptr;
 		uniformBuffers.clear();
 		uniformBuffersMemory.clear();
-		indexBuffer = nullptr;
-		indexBufferMemory = nullptr;
-		vertexBuffer = nullptr;
-		vertexBufferMemory = nullptr;
 		descriptorSetLayout = nullptr;
 		swapchain.reset();
 		vulkanDevice.reset();

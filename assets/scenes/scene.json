@@ -1,0 +1,12 @@
+{
+    "objects": [
+        {
+            "mesh": "cube",
+            "position": [0.0, 0.0, 0.0]
+        },
+        {
+            "mesh": "plane",
+            "position": [0.0, 0.0, -1.0]
+        }
+    ]
+}
