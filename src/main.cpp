@@ -72,13 +72,14 @@ struct Vertex
 	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texCoord;
+	glm::vec3 normal;
 
 	static vk::VertexInputBindingDescription getBindingDescription()
 	{
 		return {0, sizeof(Vertex), vk::VertexInputRate::eVertex};
 	}
 
-	static std::array<vk::VertexInputAttributeDescription, 3>
+	static std::array<vk::VertexInputAttributeDescription, 4>
 	getAttributeDescriptions()
 	{
 		return {vk::VertexInputAttributeDescription(
@@ -86,7 +87,9 @@ struct Vertex
 				vk::VertexInputAttributeDescription(
 					1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
 				vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,
-													offsetof(Vertex, texCoord))};
+													offsetof(Vertex, texCoord)),
+				vk::VertexInputAttributeDescription(
+					3, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))};
 	}
 };
 
@@ -173,7 +176,7 @@ private:
 	vk::raii::Sampler textureSampler = nullptr;
 
 	// --- Shadow Mapping ---
-	static constexpr uint32_t SHADOW_MAP_SIZE = 1024;
+	static constexpr uint32_t SHADOW_MAP_SIZE = 2048;
 	vk::raii::Image shadowMapImage = nullptr;
 	vk::raii::DeviceMemory shadowMapImageMemory = nullptr;
 	vk::raii::ImageView shadowMapImageView = nullptr;
@@ -206,7 +209,9 @@ private:
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
-	glm::vec3 lightDir = glm::normalize(glm::vec3(2.0f, 1.0f, -2.0f));
+	float lightAngle = 0.0f;   // radians, controls orbit position
+	bool  lightOrbit = true;   // when false, angle is frozen
+	float prevTime   = 0.0f;   // last frame's timestamp, for delta-time
 
 	// Data layout of the uniform buffer as the shader sees it.
 	struct UniformBufferObject
@@ -214,6 +219,7 @@ private:
 		glm::mat4 view;
 		glm::mat4 proj;
 		glm::mat4 lightSpaceMatrix;
+		glm::vec4 lightDir; // xyz = direction from surface toward light, w unused
 	};
 
 	vk::raii::DescriptorPool imguiDescriptorPool = nullptr;
@@ -231,7 +237,7 @@ private:
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		// glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); /* TODO: Make it optional*/
 
-		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		window = glfwCreateWindow(WIDTH, HEIGHT, "blaz-engine", nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
 		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 	}
@@ -295,7 +301,7 @@ private:
 	{
 		std::array bindings = {vk::DescriptorSetLayoutBinding(
 								   0, vk::DescriptorType::eUniformBuffer, 1,
-								   vk::ShaderStageFlagBits::eVertex, nullptr),
+								   vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr),
 							   vk::DescriptorSetLayoutBinding(
 								   1, vk::DescriptorType::eCombinedImageSampler, 1,
 								   vk::ShaderStageFlagBits::eFragment, nullptr),
@@ -1008,35 +1014,35 @@ private:
 		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
 			// +Z face (front)
-			{{-h, -h, h}, color, {0, 0}},
-			{{h, -h, h}, color, {1, 0}},
-			{{h, h, h}, color, {1, 1}},
-			{{-h, h, h}, color, {0, 1}},
+			{{-h, -h, h}, color, {0, 0}, {0, 0, 1}},
+			{{h, -h, h}, color, {1, 0}, {0, 0, 1}},
+			{{h, h, h}, color, {1, 1}, {0, 0, 1}},
+			{{-h, h, h}, color, {0, 1}, {0, 0, 1}},
 			// -Z face (back)
-			{{h, -h, -h}, color, {0, 0}},
-			{{-h, -h, -h}, color, {1, 0}},
-			{{-h, h, -h}, color, {1, 1}},
-			{{h, h, -h}, color, {0, 1}},
+			{{h, -h, -h}, color, {0, 0}, {0, 0, -1}},
+			{{-h, -h, -h}, color, {1, 0}, {0, 0, -1}},
+			{{-h, h, -h}, color, {1, 1}, {0, 0, -1}},
+			{{h, h, -h}, color, {0, 1}, {0, 0, -1}},
 			// +X face (right)
-			{{h, -h, h}, color, {0, 0}},
-			{{h, -h, -h}, color, {1, 0}},
-			{{h, h, -h}, color, {1, 1}},
-			{{h, h, h}, color, {0, 1}},
+			{{h, -h, h}, color, {0, 0}, {1, 0, 0}},
+			{{h, -h, -h}, color, {1, 0}, {1, 0, 0}},
+			{{h, h, -h}, color, {1, 1}, {1, 0, 0}},
+			{{h, h, h}, color, {0, 1}, {1, 0, 0}},
 			// -X face (left)
-			{{-h, -h, -h}, color, {0, 0}},
-			{{-h, -h, h}, color, {1, 0}},
-			{{-h, h, h}, color, {1, 1}},
-			{{-h, h, -h}, color, {0, 1}},
+			{{-h, -h, -h}, color, {0, 0}, {-1, 0, 0}},
+			{{-h, -h, h}, color, {1, 0}, {-1, 0, 0}},
+			{{-h, h, h}, color, {1, 1}, {-1, 0, 0}},
+			{{-h, h, -h}, color, {0, 1}, {-1, 0, 0}},
 			// +Y face (top)
-			{{-h, h, h}, color, {0, 0}},
-			{{h, h, h}, color, {1, 0}},
-			{{h, h, -h}, color, {1, 1}},
-			{{-h, h, -h}, color, {0, 1}},
+			{{-h, h, h}, color, {0, 0}, {0, 1, 0}},
+			{{h, h, h}, color, {1, 0}, {0, 1, 0}},
+			{{h, h, -h}, color, {1, 1}, {0, 1, 0}},
+			{{-h, h, -h}, color, {0, 1}, {0, 1, 0}},
 			// -Y face (bottom)
-			{{-h, -h, -h}, color, {0, 0}},
-			{{h, -h, -h}, color, {1, 0}},
-			{{h, -h, h}, color, {1, 1}},
-			{{-h, -h, h}, color, {0, 1}},
+			{{-h, -h, -h}, color, {0, 0}, {0, -1, 0}},
+			{{h, -h, -h}, color, {1, 0}, {0, -1, 0}},
+			{{h, -h, h}, color, {1, 1}, {0, -1, 0}},
+			{{-h, -h, h}, color, {0, 1}, {0, -1, 0}},
 		};
 		std::vector<uint32_t> idxs;
 		for (uint32_t f = 0; f < 6; ++f)
@@ -1051,10 +1057,10 @@ private:
 	{
 		float h = size * 0.5f;
 		std::vector<Vertex> verts = {
-			{{-h, -h, 0.0f}, color, {0, 0}},
-			{{h, -h, 0.0f}, color, {1, 0}},
-			{{h, h, 0.0f}, color, {1, 1}},
-			{{-h, h, 0.0f}, color, {0, 1}},
+			{{-h, -h, 0.0f}, color, {0, 0}, {0, 0, 1}},
+			{{h, -h, 0.0f}, color, {1, 0}, {0, 0, 1}},
+			{{h, h, 0.0f}, color, {1, 1}, {0, 0, 1}},
+			{{-h, h, 0.0f}, color, {0, 1}, {0, 0, 1}},
 		};
 		std::vector<uint32_t> idxs = {0, 1, 2, 0, 2, 3};
 		return {verts, idxs};
@@ -1439,10 +1445,21 @@ private:
 		// Flip the scaling factor of the Y axis in the projection matrix
 		ubo.proj[1][1] *= -1;
 
-		glm::vec3 lightPos = -lightDir * 20.0f;
+		float dt = time - prevTime;
+		prevTime = time;
+		if (lightOrbit){
+			lightAngle += (dt * 0.5f) * glm::two_pi<float>() / 10.0f; // one orbit every 10 seconds
+			lightAngle = lightAngle > glm::two_pi<float>() ? lightAngle - glm::two_pi<float>() : lightAngle;
+		}
+
+		glm::vec3 lightPos = glm::vec3(
+			glm::cos(lightAngle) * 8.0f,
+			glm::sin(lightAngle) * 8.0f,
+			6.0f);
 		glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		glm::mat4 lightProj = glm::ortho(-10.f, 10.f, -10.f, 10.f, 0.1f, 50.f);
 		ubo.lightSpaceMatrix = lightProj * lightView;
+		ubo.lightDir = glm::vec4(glm::normalize(lightPos), 0.0f);
 
 		memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
@@ -1850,6 +1867,13 @@ private:
 			}
 			ImGui::EndCombo();
 		}
+
+		ImGui::Separator();
+
+		// Light controls
+		ImGui::Checkbox("Orbit light", &lightOrbit);
+		if (!lightOrbit)
+			ImGui::SliderAngle("Light angle", &lightAngle, 0.0f, 360.0f);
 
 		ImGui::End();
 

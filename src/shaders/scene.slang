@@ -2,12 +2,14 @@ struct VSInput {
     float3 inPosition;
     float3 inColor;
     float2 inTexCoord;
+    float3 inNormal;
 };
 
 struct UniformBuffer {
     float4x4 view;
     float4x4 proj;
     float4x4 lightSpaceMatrix;
+    float4 lightDir; // xyz = direction from surface toward light
 };
 ConstantBuffer<UniformBuffer> ubo;
 
@@ -22,6 +24,7 @@ struct VSOutput
     float3 fragColor;
     float2 fragTexCoord;
     float4 fragPosLightSpace;
+    float3 fragNormal;
 };
 
 [shader("vertex")]
@@ -32,6 +35,7 @@ VSOutput vertMain(VSInput input) {
     output.fragColor = input.inColor;
     output.fragTexCoord = input.inTexCoord;
     output.fragPosLightSpace = mul(ubo.lightSpaceMatrix, worldPos);
+    output.fragNormal = normalize(mul((float3x3)push.model, input.inNormal));
     return output;
 }
 
@@ -44,15 +48,24 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     float2 shadowUV = projCoords.xy * 0.5 + 0.5;
     float currentDepth = projCoords.z;
 
-    uint shadowW, shadowH;
-    shadowMap.GetDimensions(shadowW, shadowH);
-    float2 texelSize = 1.0 / float2(shadowW, shadowH);
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x)
-        for (int y = -1; y <= 1; ++y)
-            shadow += shadowMap.SampleCmp(shadowUV + float2(x, y) * texelSize, currentDepth);
-    shadow /= 9.0;
+    // Fragments outside the light frustum are always lit
+    float shadow = 1.0;
+    if (currentDepth <= 1.0) {
+        uint shadowW, shadowH;
+        shadowMap.GetDimensions(shadowW, shadowH);
+        float2 texelSize = 1.0 / float2(shadowW, shadowH);
+        shadow = 0.0;
+        for (int x = -1; x <= 1; ++x)
+            for (int y = -1; y <= 1; ++y)
+                shadow += shadowMap.SampleCmp(shadowUV + float2(x, y) * texelSize, currentDepth);
+        shadow /= 9.0;
+    }
 
-    float3 color = vertIn.fragColor * (0.3 + 0.7 * shadow);
+    float3 norm = normalize(vertIn.fragNormal);
+    float3 toLight = normalize(ubo.lightDir.xyz);
+    float diffuse = max(dot(norm, toLight), 0.0);
+
+    float ambient = 0.2;
+    float3 color = vertIn.fragColor * (ambient + (1.0 - ambient) * diffuse * shadow);
     return float4(color, 1.0);
 }
