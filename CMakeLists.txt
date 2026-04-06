@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.29)
-project(HelloTriangle)
+project(VulkanRenderer)
 
 option(ENABLE_CPP20_MODULE "Use Vulkan C++20 module (import vulkan_hpp) instead of headers" OFF)
 
@@ -78,7 +78,7 @@ file(COPY ${CMAKE_SOURCE_DIR}/assets/scenes DESTINATION ${CMAKE_BINARY_DIR})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
-add_executable(main src/main.cpp src/Device.cpp src/Swapchain.cpp
+add_executable(main src/main.cpp src/VulkanRenderer.cpp src/Camera.cpp src/Scene.cpp src/Device.cpp src/Swapchain.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp

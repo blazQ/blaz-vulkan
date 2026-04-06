@@ -9,7 +9,9 @@ struct UniformBuffer {
     float4x4 view;
     float4x4 proj;
     float4x4 lightSpaceMatrix;
-    float4 lightDir; // xyz = direction from surface toward light
+    float4 lightDir; 
+    float4 cameraPos;
+    float4 materialParams;
 };
 ConstantBuffer<UniformBuffer> ubo;
 
@@ -25,6 +27,7 @@ struct VSOutput
     float2 fragTexCoord;
     float4 fragPosLightSpace;
     float3 fragNormal;
+    float3 fragWorldPos;
 };
 
 [shader("vertex")]
@@ -36,6 +39,7 @@ VSOutput vertMain(VSInput input) {
     output.fragTexCoord = input.inTexCoord;
     output.fragPosLightSpace = mul(ubo.lightSpaceMatrix, worldPos);
     output.fragNormal = normalize(mul((float3x3)push.model, input.inNormal));
+    output.fragWorldPos = worldPos.xyz;
     return output;
 }
 
@@ -61,11 +65,21 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
         shadow /= 9.0;
     }
 
-    float3 norm = normalize(vertIn.fragNormal);
-    float3 toLight = normalize(ubo.lightDir.xyz);
-    float diffuse = max(dot(norm, toLight), 0.0);
+    float ambient         = ubo.materialParams.x;
+    float specStrength    = ubo.materialParams.y;
+    float shininess       = ubo.materialParams.z;
 
-    float ambient = 0.2;
-    float3 color = vertIn.fragColor * (ambient + (1.0 - ambient) * diffuse * shadow);
+    float3 norm     = normalize(vertIn.fragNormal);
+    float3 toLight  = normalize(ubo.lightDir.xyz);
+    float3 viewDir  = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
+    float3 reflDir  = reflect(-toLight, norm);
+
+    float diffuse  = max(dot(norm, toLight), 0.0);
+    float specular = (diffuse > 0.0)
+                   ? pow(max(dot(viewDir, reflDir), 0.0), shininess) * specStrength
+                   : 0.0;
+
+    float3 color = vertIn.fragColor * (ambient + (1.0 - ambient) * diffuse * shadow)
+                 + specular * shadow;
     return float4(color, 1.0);
 }
