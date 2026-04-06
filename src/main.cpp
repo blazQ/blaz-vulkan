@@ -438,14 +438,15 @@ private:
 			.pName = "vertMain"};
 
 		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		vk::VertexInputAttributeDescription posAttr{
+			0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)};
 
 		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
 			.vertexBindingDescriptionCount = 1,
 			.pVertexBindingDescriptions = &bindingDescription,
-			.vertexAttributeDescriptionCount =
-				static_cast<uint32_t>(attributeDescriptions.size()),
-			.pVertexAttributeDescriptions = attributeDescriptions.data()};
+			.vertexAttributeDescriptionCount = 1,
+			.pVertexAttributeDescriptions = &posAttr};
 		
 		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
 			.topology = vk::PrimitiveTopology::eTriangleList};
