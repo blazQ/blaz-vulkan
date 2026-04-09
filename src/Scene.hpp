@@ -12,11 +12,13 @@ struct Vertex
     glm::vec3 color;
     glm::vec2 texCoord;
     glm::vec3 normal;
+    glm::vec4 tangent; // xyz = tangent direction in world space, w = bitangent sign (+1 or -1)
 
     bool operator==(const Vertex &o) const
     {
         return pos == o.pos && color == o.color &&
-               texCoord == o.texCoord && normal == o.normal;
+               texCoord == o.texCoord && normal == o.normal &&
+               tangent == o.tangent;
     }
 };
 
@@ -36,6 +38,7 @@ struct std::hash<Vertex>
         s = h(s, fh(v.color.x));    s = h(s, fh(v.color.y));    s = h(s, fh(v.color.z));
         s = h(s, fh(v.texCoord.x)); s = h(s, fh(v.texCoord.y));
         s = h(s, fh(v.normal.x));   s = h(s, fh(v.normal.y));   s = h(s, fh(v.normal.z));
+        s = h(s, fh(v.tangent.x));  s = h(s, fh(v.tangent.y));  s = h(s, fh(v.tangent.z)); s = h(s, fh(v.tangent.w));
         return s;
     }
 };

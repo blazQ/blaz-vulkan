@@ -50,6 +50,8 @@ private:
 
     // GPU-side mesh instance: owns Vulkan buffers, a model matrix, and a
     // texture index into the global bindless texture array.
+    // The decomposed transform (position/rotationDeg/scale) is kept alongside
+    // the baked matrix so the ImGui sliders can edit them at runtime.
     struct Renderable
     {
         vk::raii::Buffer vertexBuffer = nullptr;
@@ -57,18 +59,31 @@ private:
         vk::raii::Buffer indexBuffer = nullptr;
         vk::raii::DeviceMemory indexBufferMemory = nullptr;
         uint32_t indexCount = 0;
-        glm::mat4 modelMatrix = glm::mat4(1.0f);
-        uint32_t textureIndex = 0;
+        glm::mat4 modelMatrix      = glm::mat4(1.0f);
+        uint32_t  textureIndex     = 0xFFFFu;
+        uint32_t  specularMapIndex = 0xFFFFu;
+        uint32_t  normalMapIndex   = 0xFFFFu;
+        uint32_t  heightMapIndex   = 0xFFFFu;
+
+        std::string   label;
+        glm::vec3     position    = {0.0f, 0.0f, 0.0f};
+        glm::vec3     rotationDeg = {0.0f, 0.0f, 0.0f}; // XYZ Euler, degrees
+        float         scale       = 1.0f;
     };
 
-    // Push constants sent per draw call: model matrix + which texture to use.
+    // Push constants sent per draw call: model matrix + which textures to use.
     struct PushConstants
     {
         glm::mat4 model;
-        uint32_t textureIndex;
+        uint32_t  textureIndex;
+        uint32_t  specularMapIndex; // 0xFFFF = no specular map, use global specStrength
+        uint32_t  normalMapIndex;   // 0xFFFF = use geometric normal
+        uint32_t  heightMapIndex;   // 0xFFFF = no height map, skip POM
     };
 
     // Data layout of the uniform buffer as the shader sees it.
+    // All fields are vec4-aligned — do not insert scalars between them.
+    // Must stay in sync with SkyUBO in sky.slang.
     struct UniformBufferObject
     {
         glm::mat4 view;
@@ -76,7 +91,35 @@ private:
         glm::mat4 lightSpaceMatrix;
         glm::vec4 lightDir;
         glm::vec4 cameraPos;
-        glm::vec4 materialParams; // x=ambient, y=specularStrength, z=shininess
+        glm::vec4 materialParams;        // x=ambient, y=specStrength, z=shininess, w=exposure
+        glm::vec4 pointLightPos[4];      // xyz=world position, w=intensity
+        glm::vec4 pointLightColor[4];    // xyz=color, w=radius (falloff distance)
+        glm::vec4 lightCounts;           // x=number of active point lights
+        glm::vec4 shadowParams;          // x=biasMin, y=biasMax (slope-scale shadow bias range)
+        glm::vec4 pomParams;             // x=depthScale, y=minSteps, z=maxSteps
+        // Sky ray reconstruction (used by sky.slang)
+        glm::mat4 invProj;               // inverse of proj
+        glm::mat4 invViewRot;            // inverse of view rotation (translation zeroed)
+    };
+
+    // Sky appearance pushed per-frame. Must match SkyPush in sky.slang.
+    struct SkyPushConstants
+    {
+        glm::vec4 horizonColor = {0.60f, 0.75f, 0.95f, 1.0f};
+        glm::vec4 zenithColor  = {0.10f, 0.30f, 0.75f, 1.0f};
+        glm::vec4 groundColor  = {0.20f, 0.15f, 0.10f, 1.0f};
+        // xyz = sun color (HDR — can exceed 1.0), w = cos(half-angle of sun disk)
+        glm::vec4 sunParams    = {1.5f,  1.3f,  1.0f,  0.9998f};
+    };
+
+    // CPU-side point light description, mirrored into the UBO each frame.
+    struct PointLightData
+    {
+        glm::vec3 position  = {0.0f, 0.0f, 3.0f};
+        float     intensity = 3.0f;
+        glm::vec3 color     = {1.0f, 1.0f, 1.0f};
+        float     radius    = 8.0f;
+        bool      enabled   = false;
     };
 
     // -------------------------------------------------------------------------
@@ -91,11 +134,21 @@ private:
     std::unique_ptr<Device> vulkanDevice;
     std::unique_ptr<Swapchain> swapchain;
 
-    // Pipelines
+    // Scene pipeline
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::Pipeline shadowPipeline = nullptr;
+
+    // Sky pipeline
+    vk::raii::DescriptorSetLayout skyDescriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout      skyPipelineLayout      = nullptr;
+    vk::raii::Pipeline            skyPipeline            = nullptr;
+    vk::raii::DescriptorPool      skyDescriptorPool      = nullptr;
+    std::vector<vk::raii::DescriptorSet> skyDescriptorSets;
+    SkyPushConstants skyPush;
+    bool             skyEnabled = true;
+
     vk::PresentModeKHR pendingPresentMode = vk::PresentModeKHR::eMailbox;
 
     // Command recording
@@ -136,16 +189,39 @@ private:
 
     // Camera
     Camera camera;
+    bool      cameraMode    = false;  // true while RMB is held and cursor is captured
+    glm::vec2 lastMousePos  = {0.0f, 0.0f};
 
     // Lighting / material
-    float ambient = 0.2f;
+    float ambient          = 0.2f;
     float specularStrength = 0.5f;
-    float shininess = 32.0f;
+    float shininess        = 32.0f;
+    float exposure         = 1.0f;
+    bool  tonemapping      = true;
+
+    // Shadow bias: lerp(biasMin, biasMax, NdotL) — more bias at grazing angles.
+    // Too high → peter panning (shadow detaches from caster).
+    // Too low  → shadow acne (surface self-shadows with noise).
+    float shadowBiasMin = 0.0005f;
+    float shadowBiasMax = 0.003f;
+
+    // Parallax Occlusion Mapping
+    float pomDepthScale = 0.05f;   // how tall the displacement appears (world units)
+    float pomMinSteps   = 8.0f;    // steps when looking straight at the surface
+    float pomMaxSteps   = 32.0f;   // steps at grazing angles
 
     // Light animation
     float lightAngle = 0.0f;
     bool lightOrbit = true;
     float prevTime = 0.0f;
+
+    // Point lights (no shadow casting).
+    // Loaded from scene.json "pointLights" array; can also be added/removed at runtime via ImGui.
+    static constexpr int MAX_POINT_LIGHTS = 4;
+    std::vector<PointLightData> pointLights = {
+        PointLightData{{-4.0f,  3.0f, 4.0f}, 4.0f, {1.0f, 0.85f, 0.5f},  8.0f, true},  // warm key
+        PointLightData{{ 4.0f, -3.0f, 3.0f}, 3.0f, {0.4f, 0.6f,  1.0f}, 10.0f, true},  // cool fill
+    };
 
     // Descriptors
     vk::raii::DescriptorPool descriptorPool = nullptr;
@@ -165,7 +241,7 @@ private:
 
     // Vertex format helpers (kept here because they return Vulkan types)
     static vk::VertexInputBindingDescription getVertexBindingDescription();
-    static std::array<vk::VertexInputAttributeDescription, 4> getVertexAttributeDescriptions();
+    static std::array<vk::VertexInputAttributeDescription, 5> getVertexAttributeDescriptions();
 
     // Window
     void initWindow();
@@ -176,6 +252,9 @@ private:
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createShadowPipeline();
+    void createSkyDescriptorSetLayout();
+    void createSkyPipeline();
+    void createSkyDescriptorSets();
     static std::vector<char> readFile(const std::string &filename);
     vk::raii::ShaderModule createShaderModule(const std::vector<char> &code);
     static bool hasStencilComponent(vk::Format format);
@@ -230,12 +309,15 @@ private:
     void drawFrame();
     void updateUniformBuffer(uint32_t currentImage);
     void recordCommandBuffer(uint32_t imageIndex);
-    void transition_image_layout(vk::Image image,
-                                 vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
-                                 vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
-                                 vk::PipelineStageFlags2 srcStageMask,
-                                 vk::PipelineStageFlags2 dstStageMask,
-                                 vk::ImageAspectFlags imageAspectFlags);
+    // Records an image memory barrier into the current frame's command buffer.
+    // Unlike transitionImageLayout() (which allocates its own one-shot command buffer),
+    // this version is called during recordCommandBuffer() for in-flight transitions.
+    void recordImageBarrier(vk::Image image,
+                            vk::ImageLayout oldLayout, vk::ImageLayout newLayout,
+                            vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask,
+                            vk::PipelineStageFlags2 srcStageMask,
+                            vk::PipelineStageFlags2 dstStageMask,
+                            vk::ImageAspectFlags imageAspectFlags);
 
     // Lifecycle
     void recreateSwapChain();

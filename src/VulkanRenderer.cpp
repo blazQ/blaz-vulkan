@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <assert.h>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <optional>
@@ -25,13 +26,14 @@ vk::VertexInputBindingDescription VulkanRenderer::getVertexBindingDescription()
 	return {0, sizeof(Vertex), vk::VertexInputRate::eVertex};
 }
 
-std::array<vk::VertexInputAttributeDescription, 4> VulkanRenderer::getVertexAttributeDescriptions()
+std::array<vk::VertexInputAttributeDescription, 5> VulkanRenderer::getVertexAttributeDescriptions()
 {
 	return {
-		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
-		vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
-		vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord)),
-		vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))};
+		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, pos)),
+		vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, color)),
+		vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,     offsetof(Vertex, texCoord)),
+		vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, normal)),
+		vk::VertexInputAttributeDescription(4, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Vertex, tangent))};
 }
 
 void VulkanRenderer::run()
@@ -94,18 +96,35 @@ void VulkanRenderer::initVulkan()
 	// swapchain falls back silently. Without this, drawFrame would call
 	// recreateSwapChain every single frame.
 	pendingPresentMode = swapchain->getPresentMode();
+
+	// --- Descriptor layouts (must exist before any pipeline is created) ---
 	createDescriptorSetLayout();
+	createSkyDescriptorSetLayout();
+
+	// --- Pipelines ---
 	createGraphicsPipeline();
 	createShadowPipeline();
+	createSkyPipeline();
+
+	// --- Command infrastructure ---
 	createCommandPool();
+
+	// --- Render attachments ---
 	createColorResources();
 	createDepthResources();
 	createShadowMapResources();
 	createShadowMapSampler();
+
+	// --- Scene and GPU data ---
 	loadScene();
 	createUniformBuffers();
+
+	// --- Descriptors ---
 	createDescriptorPool();
 	createDescriptorSets();
+	createSkyDescriptorSets();   // must come after createUniformBuffers
+
+	// --- Synchronisation ---
 	createCommandBuffers();
 	createSyncObjects();
 }
@@ -321,6 +340,128 @@ void VulkanRenderer::createShadowPipeline()
 	shadowPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
 }
 
+// ─── Sky pipeline ──────────────────────────────────────────────────────────
+
+void VulkanRenderer::createSkyDescriptorSetLayout()
+{
+	// Sky only needs the UBO (binding 0) to access invProj / invViewRot / lightDir.
+	vk::DescriptorSetLayoutBinding uboBinding{
+		.binding         = 0,
+		.descriptorType  = vk::DescriptorType::eUniformBuffer,
+		.descriptorCount = 1,
+		.stageFlags      = vk::ShaderStageFlagBits::eFragment};
+	vk::DescriptorSetLayoutCreateInfo info{.bindingCount = 1, .pBindings = &uboBinding};
+	skyDescriptorSetLayout = vk::raii::DescriptorSetLayout(vulkanDevice->getLogicalDevice(), info);
+}
+
+void VulkanRenderer::createSkyPipeline()
+{
+	vk::raii::ShaderModule skyShader = createShaderModule(readFile("shaders/sky.spv"));
+	vk::PipelineShaderStageCreateInfo stages[2] = {
+		{.stage = vk::ShaderStageFlagBits::eVertex,   .module = skyShader, .pName = "skyVert"},
+		{.stage = vk::ShaderStageFlagBits::eFragment, .module = skyShader, .pName = "skyFrag"}};
+
+	// Sky push constants: SkyPushConstants (64 bytes), fragment stage only.
+	vk::PushConstantRange pushRange{
+		.stageFlags = vk::ShaderStageFlagBits::eFragment,
+		.offset     = 0,
+		.size       = sizeof(SkyPushConstants)};
+	vk::PipelineLayoutCreateInfo layoutInfo{
+		.setLayoutCount         = 1,
+		.pSetLayouts            = &*skyDescriptorSetLayout,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges    = &pushRange};
+	skyPipelineLayout = vk::raii::PipelineLayout(vulkanDevice->getLogicalDevice(), layoutInfo);
+
+	// No vertex input — fullscreen triangle is generated from SV_VertexID.
+	vk::PipelineVertexInputStateCreateInfo vertexInput{};
+	vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+		.topology = vk::PrimitiveTopology::eTriangleList};
+
+	std::vector<vk::DynamicState> dynStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+	vk::PipelineDynamicStateCreateInfo dynState{
+		.dynamicStateCount = static_cast<uint32_t>(dynStates.size()),
+		.pDynamicStates    = dynStates.data()};
+	vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+
+	vk::PipelineRasterizationStateCreateInfo rasterizer{
+		.polygonMode = vk::PolygonMode::eFill,
+		.cullMode    = vk::CullModeFlagBits::eNone,   // fullscreen tri, no culling needed
+		.lineWidth   = 1.0f};
+	vk::PipelineMultisampleStateCreateInfo multisampling{
+		.rasterizationSamples = msaaSamples};
+
+	vk::PipelineColorBlendAttachmentState colorBlendAtt{
+		.blendEnable    = vk::False,
+		.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+		                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+	vk::PipelineColorBlendStateCreateInfo colorBlending{
+		.attachmentCount = 1, .pAttachments = &colorBlendAtt};
+
+	// Depth: test against scene geometry (sky at depth 1.0 passes where nothing was drawn),
+	// but don't write depth so scene geometry isn't overwritten.
+	vk::PipelineDepthStencilStateCreateInfo depthStencil{
+		.depthTestEnable  = vk::True,
+		.depthWriteEnable = vk::False,
+		.depthCompareOp   = vk::CompareOp::eLessOrEqual};
+
+	vk::Format depthFormat = vulkanDevice->findDepthFormat();
+	vk::PipelineRenderingCreateInfo renderingInfo{
+		.colorAttachmentCount    = 1,
+		.pColorAttachmentFormats = &swapchain->getSurfaceFormat().format,
+		.depthAttachmentFormat   = depthFormat};
+
+	vk::GraphicsPipelineCreateInfo pipelineInfo{
+		.pNext               = &renderingInfo,
+		.stageCount          = 2,
+		.pStages             = stages,
+		.pVertexInputState   = &vertexInput,
+		.pInputAssemblyState = &inputAssembly,
+		.pViewportState      = &viewportState,
+		.pRasterizationState = &rasterizer,
+		.pMultisampleState   = &multisampling,
+		.pDepthStencilState  = &depthStencil,
+		.pColorBlendState    = &colorBlending,
+		.pDynamicState       = &dynState,
+		.layout              = skyPipelineLayout};
+	skyPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
+}
+
+void VulkanRenderer::createSkyDescriptorSets()
+{
+	vk::DescriptorPoolSize uboPoolSize{
+		.type            = vk::DescriptorType::eUniformBuffer,
+		.descriptorCount = MAX_FRAMES_IN_FLIGHT};
+	vk::DescriptorPoolCreateInfo poolInfo{
+		.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+		.maxSets       = MAX_FRAMES_IN_FLIGHT,
+		.poolSizeCount = 1,
+		.pPoolSizes    = &uboPoolSize};
+	skyDescriptorPool = vk::raii::DescriptorPool(vulkanDevice->getLogicalDevice(), poolInfo);
+
+	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *skyDescriptorSetLayout);
+	skyDescriptorSets = vulkanDevice->getLogicalDevice().allocateDescriptorSets(
+		vk::DescriptorSetAllocateInfo{
+			.descriptorPool     = skyDescriptorPool,
+			.descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+			.pSetLayouts        = layouts.data()});
+
+	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+	{
+		vk::DescriptorBufferInfo buf{uniformBuffers[i], 0, sizeof(UniformBufferObject)};
+		vulkanDevice->getLogicalDevice().updateDescriptorSets(
+			vk::WriteDescriptorSet{
+				.dstSet          = skyDescriptorSets[i],
+				.dstBinding      = 0,
+				.descriptorCount = 1,
+				.descriptorType  = vk::DescriptorType::eUniformBuffer,
+				.pBufferInfo     = &buf},
+			{});
+	}
+}
+
+// ─── Utility helpers ───────────────────────────────────────────────────────
+
 std::vector<char> VulkanRenderer::readFile(const std::string &filename)
 {
 	std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -425,9 +566,9 @@ void VulkanRenderer::createShadowMapSampler()
 		.magFilter = vk::Filter::eLinear,
 		.minFilter = vk::Filter::eLinear,
 		.mipmapMode = vk::SamplerMipmapMode::eLinear,
-		.addressModeU = vk::SamplerAddressMode::eClampToEdge,
-		.addressModeV = vk::SamplerAddressMode::eClampToEdge,
-		.addressModeW = vk::SamplerAddressMode::eClampToEdge,
+		.addressModeU = vk::SamplerAddressMode::eClampToBorder,
+		.addressModeV = vk::SamplerAddressMode::eClampToBorder,
+		.addressModeW = vk::SamplerAddressMode::eClampToBorder,
 		.mipLodBias = 0.0f,
 		.anisotropyEnable = vk::False,
 		.maxAnisotropy = 1.0f,
@@ -804,6 +945,17 @@ void VulkanRenderer::uploadRenderable(Renderable &r, const std::vector<Vertex> &
 	r.indexCount = static_cast<uint32_t>(idxs.size());
 }
 
+// Rebuilds a model matrix from the decomposed transform stored in Renderable.
+// Called once at load time and again whenever ImGui sliders change a value.
+static glm::mat4 buildModelMatrix(glm::vec3 pos, glm::vec3 rotDeg, float scale)
+{
+	glm::mat4 m = glm::translate(glm::mat4(1.0f), pos);
+	m = glm::rotate(m, glm::radians(rotDeg.x), glm::vec3(1, 0, 0));
+	m = glm::rotate(m, glm::radians(rotDeg.y), glm::vec3(0, 1, 0));
+	m = glm::rotate(m, glm::radians(rotDeg.z), glm::vec3(0, 0, 1));
+	return glm::scale(m, glm::vec3(scale));
+}
+
 void VulkanRenderer::loadScene()
 {
 	std::ifstream f(SCENE_PATH);
@@ -811,6 +963,39 @@ void VulkanRenderer::loadScene()
 		throw std::runtime_error("failed to open scene file: " + SCENE_PATH);
 
 	nlohmann::json scene = nlohmann::json::parse(f);
+
+	// Optional skybox settings
+	if (scene.contains("skybox"))
+	{
+		const auto &s = scene["skybox"];
+		if (s.contains("horizonColor"))
+			skyPush.horizonColor = {s["horizonColor"][0], s["horizonColor"][1], s["horizonColor"][2], 1.0f};
+		if (s.contains("zenithColor"))
+			skyPush.zenithColor  = {s["zenithColor"][0],  s["zenithColor"][1],  s["zenithColor"][2],  1.0f};
+		if (s.contains("groundColor"))
+			skyPush.groundColor  = {s["groundColor"][0],  s["groundColor"][1],  s["groundColor"][2],  1.0f};
+		if (s.contains("sunColor"))
+			skyPush.sunParams    = {s["sunColor"][0], s["sunColor"][1], s["sunColor"][2],
+			                        s.value("sunSize", 0.9998f)};
+	}
+
+	// Optional point lights (overrides the compiled-in defaults when present)
+	if (scene.contains("pointLights"))
+	{
+		pointLights.clear();
+		for (const auto &pl : scene["pointLights"])
+		{
+			PointLightData d;
+			if (pl.contains("position"))
+				d.position  = {pl["position"][0], pl["position"][1], pl["position"][2]};
+			if (pl.contains("color"))
+				d.color     = {pl["color"][0], pl["color"][1], pl["color"][2]};
+			d.intensity     = pl.value("intensity", 3.0f);
+			d.radius        = pl.value("radius",    8.0f);
+			d.enabled       = pl.value("enabled",   true);
+			pointLights.push_back(d);
+		}
+	}
 
 	for (const auto &obj : scene["objects"])
 	{
@@ -822,6 +1007,15 @@ void VulkanRenderer::loadScene()
 		float size = obj.value("size", 1.0f);
 		std::optional<std::string> texturePath = obj.contains("texture")
 			? std::optional<std::string>{obj["texture"].get<std::string>()}
+			: std::nullopt;
+		std::optional<std::string> specularMapPath = obj.contains("specularMap")
+			? std::optional<std::string>{obj["specularMap"].get<std::string>()}
+			: std::nullopt;
+		std::optional<std::string> normalMapPath = obj.contains("normalMap")
+			? std::optional<std::string>{obj["normalMap"].get<std::string>()}
+			: std::nullopt;
+		std::optional<std::string> heightMapPath = obj.contains("heightMap")
+			? std::optional<std::string>{obj["heightMap"].get<std::string>()}
 			: std::nullopt;
 
 		// Optional rotation (XYZ Euler angles, degrees) and uniform scale.
@@ -838,15 +1032,16 @@ void VulkanRenderer::loadScene()
 		else
 			meshData = loadOBJ(mesh);
 
-		glm::mat4 model = glm::translate(glm::mat4(1.0f), pos);
-		model = glm::rotate(model, glm::radians(rotDeg.x), glm::vec3(1, 0, 0));
-		model = glm::rotate(model, glm::radians(rotDeg.y), glm::vec3(0, 1, 0));
-		model = glm::rotate(model, glm::radians(rotDeg.z), glm::vec3(0, 0, 1));
-		model = glm::scale(model, glm::vec3(scale));
-
 		Renderable r;
-		r.modelMatrix    = model;
-		r.textureIndex   = texturePath ? loadTexture(*texturePath) : 0xFFFFu;
+		r.label       = mesh;
+		r.position    = pos;
+		r.rotationDeg = rotDeg;
+		r.scale       = scale;
+		r.modelMatrix = buildModelMatrix(pos, rotDeg, scale);
+		r.textureIndex     = texturePath     ? loadTexture(*texturePath)     : 0xFFFFu;
+		r.specularMapIndex = specularMapPath ? loadTexture(*specularMapPath) : 0xFFFFu;
+		r.normalMapIndex   = normalMapPath   ? loadTexture(*normalMapPath)   : 0xFFFFu;
+		r.heightMapIndex   = heightMapPath   ? loadTexture(*heightMapPath)   : 0xFFFFu;
 		uploadRenderable(r, meshData.first, meshData.second);
 		renderables.push_back(std::move(r));
 	}
@@ -978,9 +1173,52 @@ void VulkanRenderer::createSyncObjects()
 
 void VulkanRenderer::mainLoop()
 {
+	auto lastTime = std::chrono::steady_clock::now();
+
+	// Prime last mouse position so the first frame has zero delta.
+	double mx0, my0;
+	glfwGetCursorPos(window, &mx0, &my0);
+	lastMousePos = {static_cast<float>(mx0), static_cast<float>(my0)};
+
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();
+
+		// --- Delta time --------------------------------------------------
+		auto now = std::chrono::steady_clock::now();
+		float dt = std::chrono::duration<float>(now - lastTime).count();
+		lastTime = now;
+
+		// --- Camera fly mode (hold right mouse button) -------------------
+		double mx, my;
+		glfwGetCursorPos(window, &mx, &my);
+
+		bool rightHeld    = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+		bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+
+		if (rightHeld && !imguiWantsMouse)
+		{
+			if (!cameraMode)
+			{
+				// First frame of camera mode: hide cursor and reset delta to
+				// avoid a sudden jump from wherever the cursor was.
+				cameraMode   = true;
+				lastMousePos = {static_cast<float>(mx), static_cast<float>(my)};
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			}
+			glm::vec2 delta = {static_cast<float>(mx) - lastMousePos.x,
+							   static_cast<float>(my) - lastMousePos.y};
+			camera.processInput(window, dt, delta);
+		}
+		else if (cameraMode)
+		{
+			cameraMode = false;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		}
+
+		lastMousePos = {static_cast<float>(mx), static_cast<float>(my)};
+		// -----------------------------------------------------------------
+
 		drawFrame();
 	}
 
@@ -1112,7 +1350,27 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage)
 	ubo.lightSpaceMatrix = lightProj * lightView;
 	ubo.lightDir = glm::vec4(glm::normalize(lightPos), 0.0f);
 	ubo.cameraPos = glm::vec4(camera.position, 0.0f);
-	ubo.materialParams = glm::vec4(ambient, specularStrength, shininess, 0.0f);
+	ubo.materialParams = glm::vec4(ambient, specularStrength, shininess, tonemapping ? exposure : 0.0f);
+
+	int activeLights = 0;
+	for (const auto &pl : pointLights)
+	{
+		if (!pl.enabled || activeLights >= MAX_POINT_LIGHTS) continue;
+		ubo.pointLightPos[activeLights]   = glm::vec4(pl.position, pl.intensity);
+		ubo.pointLightColor[activeLights] = glm::vec4(pl.color,    pl.radius);
+		activeLights++;
+	}
+	ubo.lightCounts  = glm::vec4(static_cast<float>(activeLights), 0.0f, 0.0f, 0.0f);
+	ubo.shadowParams = glm::vec4(shadowBiasMin, shadowBiasMax, 0.0f, 0.0f);
+	ubo.pomParams    = glm::vec4(pomDepthScale, pomMinSteps, pomMaxSteps, 0.0f);
+
+	// Sky ray reconstruction matrices.
+	ubo.invProj    = glm::inverse(ubo.proj);
+	// Rotation-only view: zero the translation column then invert via transpose
+	// (valid because the rotation part of an orthogonal matrix satisfies R^-1 = R^T).
+	glm::mat4 viewRot = ubo.view;
+	viewRot[3]         = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+	ubo.invViewRot     = glm::transpose(viewRot);
 
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
@@ -1125,7 +1383,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	// ---- Shadow pass ----
 	// Transition shadow map to depth attachment for writing
-	transition_image_layout(*shadowMapImage,
+	recordImageBarrier(*shadowMapImage,
 							vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
 							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1152,7 +1410,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		*descriptorSets[frameIndex], nullptr);
 	for (const auto &r : renderables)
 	{
-		PushConstants pc{r.modelMatrix, r.textureIndex};
+		PushConstants pc{r.modelMatrix, r.textureIndex, r.specularMapIndex, r.normalMapIndex, r.heightMapIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
@@ -1167,7 +1425,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.endRendering();
 
 	// Barrier: shadow map depth attachment → shader read for main pass
-	transition_image_layout(*shadowMapImage,
+	recordImageBarrier(*shadowMapImage,
 							vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
 							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 							vk::AccessFlagBits2::eShaderRead,
@@ -1181,7 +1439,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 	if (msaaEnabled)
 	{
 		// Transition MSAA color image to color attachment optimal (render target)
-		transition_image_layout(
+		recordImageBarrier(
 			*colorImage, vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
 			vk::AccessFlagBits2::eColorAttachmentWrite,			// dstAccessMask
@@ -1192,7 +1450,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	// Transition swapchain image to color attachment optimal (resolve target,
 	// or direct render target when no MSAA)
-	transition_image_layout(
+	recordImageBarrier(
 		swapchain->getImages()[imageIndex], vk::ImageLayout::eUndefined,
 		vk::ImageLayout::eColorAttachmentOptimal, {},		// srcAccessMask
 		vk::AccessFlagBits2::eColorAttachmentWrite,			// dstAccessMask
@@ -1200,7 +1458,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		vk::PipelineStageFlagBits2::eColorAttachmentOutput, // dstStageMask
 		vk::ImageAspectFlagBits::eColor);
 
-	transition_image_layout(*depthImage, vk::ImageLayout::eUndefined,
+	recordImageBarrier(*depthImage, vk::ImageLayout::eUndefined,
 							vk::ImageLayout::eDepthAttachmentOptimal,
 							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
 							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1271,7 +1529,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	for (const auto &r : renderables)
 	{
-		PushConstants pc{r.modelMatrix, r.textureIndex};
+		PushConstants pc{r.modelMatrix, r.textureIndex, r.specularMapIndex, r.normalMapIndex, r.heightMapIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
@@ -1282,6 +1540,32 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		commandBuffer.bindVertexBuffers(0, *r.vertexBuffer, {0});
 		commandBuffer.bindIndexBuffer(*r.indexBuffer, 0, vk::IndexType::eUint32);
 		commandBuffer.drawIndexed(r.indexCount, 1, 0, 0, 0);
+	}
+
+	// ---- Sky pass (within the same render pass, after scene geometry) ----
+	// The sky fullscreen triangle sits at depth 1.0. With eLessOrEqual + no depth write,
+	// it only fills pixels where the depth buffer still holds the clear value of 1.0
+	// (i.e., where no geometry was drawn). This means no extra barrier is needed between
+	// the scene and sky draws.
+	if (skyEnabled)
+	{
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyPipeline);
+		commandBuffer.setViewport(
+			0, vk::Viewport{0.0f, 0.0f,
+			                static_cast<float>(swapchain->getExtent().width),
+			                static_cast<float>(swapchain->getExtent().height), 0.0f, 1.0f});
+		commandBuffer.setScissor(0, vk::Rect2D{{0, 0}, swapchain->getExtent()});
+		commandBuffers[frameIndex].bindDescriptorSets(
+			vk::PipelineBindPoint::eGraphics, skyPipelineLayout, 0,
+			*skyDescriptorSets[frameIndex], nullptr);
+		commandBuffer.pushConstants2(
+			vk::PushConstantsInfo{}
+				.setLayout(*skyPipelineLayout)
+				.setStageFlags(vk::ShaderStageFlagBits::eFragment)
+				.setOffset(0)
+				.setSize(sizeof(SkyPushConstants))
+				.setPValues(&skyPush));
+		commandBuffer.draw(3, 1, 0, 0);   // fullscreen triangle, no vertex buffer
 	}
 
 	commandBuffer.endRendering();
@@ -1317,7 +1601,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffer);
 	commandBuffer.endRendering();
 
-	transition_image_layout(
+	recordImageBarrier(
 		swapchain->getImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
 		vk::ImageLayout::ePresentSrcKHR,
 		vk::AccessFlagBits2::eColorAttachmentWrite,			// srcAccessMask
@@ -1329,35 +1613,30 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.end();
 }
 
-// In-frame layout transition — records into the current frame's command buffer
-// rather than allocating its own (cf. transitionImageLayout).
-void VulkanRenderer::transition_image_layout(vk::Image image, vk::ImageLayout oldLayout,
-											 vk::ImageLayout newLayout,
-											 vk::AccessFlags2 srcAccessMask,
-											 vk::AccessFlags2 dstAccessMask,
-											 vk::PipelineStageFlags2 srcStageMask,
-											 vk::PipelineStageFlags2 dstStageMask,
-											 vk::ImageAspectFlags image_aspect_flags)
+// Records an image memory barrier into the current frame's command buffer.
+// Unlike transitionImageLayout() (which allocates its own one-shot command buffer),
+// this is called during recordCommandBuffer() for in-flight transitions.
+void VulkanRenderer::recordImageBarrier(vk::Image image, vk::ImageLayout oldLayout,
+										vk::ImageLayout newLayout,
+										vk::AccessFlags2 srcAccessMask,
+										vk::AccessFlags2 dstAccessMask,
+										vk::PipelineStageFlags2 srcStageMask,
+										vk::PipelineStageFlags2 dstStageMask,
+										vk::ImageAspectFlags aspectFlags)
 {
-	vk::ImageMemoryBarrier2 barrier = {
-		.srcStageMask = srcStageMask,
-		.srcAccessMask = srcAccessMask,
-		.dstStageMask = dstStageMask,
-		.dstAccessMask = dstAccessMask,
-		.oldLayout = oldLayout,
-		.newLayout = newLayout,
+	vk::ImageMemoryBarrier2 barrier{
+		.srcStageMask        = srcStageMask,
+		.srcAccessMask       = srcAccessMask,
+		.dstStageMask        = dstStageMask,
+		.dstAccessMask       = dstAccessMask,
+		.oldLayout           = oldLayout,
+		.newLayout           = newLayout,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = image,
-		.subresourceRange = {.aspectMask = image_aspect_flags,
-							 .baseMipLevel = 0,
-							 .levelCount = 1,
-							 .baseArrayLayer = 0,
-							 .layerCount = 1}};
-	vk::DependencyInfo dependencyInfo = {.dependencyFlags = {},
-										 .imageMemoryBarrierCount = 1,
-										 .pImageMemoryBarriers = &barrier};
-	commandBuffers[frameIndex].pipelineBarrier2(dependencyInfo);
+		.image               = image,
+		.subresourceRange    = {aspectFlags, 0, 1, 0, 1}};
+	commandBuffers[frameIndex].pipelineBarrier2(
+		vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
 }
 
 void VulkanRenderer::recreateSwapChain()
@@ -1382,9 +1661,11 @@ void VulkanRenderer::rebuildMsaa()
 	depthImage = nullptr;
 	depthImageMemory = nullptr;
 	graphicsPipeline = nullptr;
+	skyPipeline      = nullptr;
 	createDepthResources();
 	createColorResources();
 	createGraphicsPipeline();
+	createSkyPipeline();
 }
 
 // Destroys resources tied to the swapchain extent. The swapchain itself is
@@ -1415,9 +1696,14 @@ void VulkanRenderer::cleanup()
 	presentCompleteSemaphores.clear();
 	commandBuffers.clear();
 	commandPool = nullptr;
-	shadowPipeline = nullptr;
+	skyDescriptorSets.clear();
+	skyDescriptorPool      = nullptr;
+	skyPipeline            = nullptr;
+	skyPipelineLayout      = nullptr;
+	skyDescriptorSetLayout = nullptr;
+	shadowPipeline   = nullptr;
 	graphicsPipeline = nullptr;
-	pipelineLayout = nullptr;
+	pipelineLayout   = nullptr;
 	shadowMapSampler = nullptr;
 	shadowMapImageView = nullptr;
 	shadowMapImage = nullptr;
@@ -1501,17 +1787,122 @@ void VulkanRenderer::drawImGui()
 	if (!lightOrbit)
 		ImGui::SliderAngle("Light angle", &lightAngle, 0.0f, 360.0f);
 
+	// Shadow bias sliders.
+	// biasMin = bias when face is lit head-on (low acne risk, low peter-pan risk).
+	// biasMax = bias at grazing angles (high acne risk without it, peter-pan if too high).
+	ImGui::SliderFloat("Shadow bias min", &shadowBiasMin, 0.0f, 0.01f, "%.4f");
+	ImGui::SliderFloat("Shadow bias max", &shadowBiasMax, 0.0f, 0.02f, "%.4f");
+
 	ImGui::Separator();
 
-	// Camera position (always looks at origin)
-	camera.drawImGui();
+	// POM
+	if (ImGui::CollapsingHeader("Parallax (POM)"))
+	{
+		ImGui::SliderFloat("Depth scale", &pomDepthScale, 0.001f, 0.2f,  "%.3f");
+		ImGui::SliderFloat("Min steps",   &pomMinSteps,   4.0f,   16.0f, "%.0f");
+		ImGui::SliderFloat("Max steps",   &pomMaxSteps,   8.0f,   64.0f, "%.0f");
+		ImGui::TextDisabled("Assign 'heightMap' in scene.json to activate POM per object.");
+	}
+
+	ImGui::Separator();
+
+	// Camera
+	if (ImGui::CollapsingHeader("Camera"))
+		camera.drawImGui();
 
 	ImGui::Separator();
 
 	// Material / lighting parameters
-	ImGui::SliderFloat("Ambient", &ambient, 0.0f, 1.0f);
-	ImGui::SliderFloat("Specular strength", &specularStrength, 0.0f, 1.0f);
-	ImGui::SliderFloat("Shininess", &shininess, 1.0f, 256.0f);
+	ImGui::Checkbox("Tonemapping (ACES)", &tonemapping);
+	if (tonemapping)
+		ImGui::SliderFloat("Exposure", &exposure, 0.1f, 10.0f);
+	ImGui::SliderFloat("Ambient",          &ambient,          0.0f,  1.0f);
+	ImGui::SliderFloat("Specular strength",&specularStrength, 0.0f,  1.0f);
+	ImGui::SliderFloat("Shininess",        &shininess,        1.0f, 256.0f);
+
+	ImGui::Separator();
+
+	// Sky
+	if (ImGui::CollapsingHeader("Sky"))
+	{
+		ImGui::Checkbox("Enabled##sky", &skyEnabled);
+		if (skyEnabled)
+		{
+			ImGui::ColorEdit3("Horizon",  &skyPush.horizonColor.x);
+			ImGui::ColorEdit3("Zenith",   &skyPush.zenithColor.x);
+			ImGui::ColorEdit3("Ground",   &skyPush.groundColor.x);
+			ImGui::ColorEdit3("Sun color",&skyPush.sunParams.x);
+			// Sun size as degrees (more intuitive than cosine)
+			float sunDeg = glm::degrees(std::acos(skyPush.sunParams.w));
+			if (ImGui::SliderFloat("Sun size (deg)", &sunDeg, 0.1f, 10.0f))
+				skyPush.sunParams.w = std::cos(glm::radians(sunDeg));
+		}
+	}
+
+	ImGui::Separator();
+
+	// Point lights
+	if (ImGui::CollapsingHeader("Point Lights"))
+	{
+		bool atMax = static_cast<int>(pointLights.size()) >= MAX_POINT_LIGHTS;
+		if (atMax) ImGui::BeginDisabled();
+		if (ImGui::Button("Add Light"))
+			pointLights.push_back(PointLightData{});
+		if (atMax)
+		{
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled("(max %d)", MAX_POINT_LIGHTS);
+		}
+
+		int removeIdx = -1;
+		for (int i = 0; i < static_cast<int>(pointLights.size()); i++)
+		{
+			auto &pl = pointLights[i];
+			ImGui::PushID(i);
+			char label[32];
+			snprintf(label, sizeof(label), "Light %d", i);
+			if (ImGui::TreeNode(label))
+			{
+				ImGui::Checkbox("Enabled",      &pl.enabled);
+				ImGui::DragFloat3("Position",   &pl.position.x,  0.05f);
+				ImGui::ColorEdit3("Color",      &pl.color.x);
+				ImGui::SliderFloat("Intensity", &pl.intensity,   0.0f, 20.0f);
+				ImGui::SliderFloat("Radius",    &pl.radius,      0.5f, 50.0f);
+				if (ImGui::Button("Remove"))
+					removeIdx = i;
+				ImGui::TreePop();
+			}
+			ImGui::PopID();
+		}
+		if (removeIdx >= 0)
+			pointLights.erase(pointLights.begin() + removeIdx);
+	}
+
+	ImGui::Separator();
+
+	// Per-object transform editors
+	if (ImGui::CollapsingHeader("Objects"))
+	{
+		for (size_t i = 0; i < renderables.size(); i++)
+		{
+			auto &r = renderables[i];
+			ImGui::PushID(static_cast<int>(i));
+			// Show a tree node per object. Use the mesh label as display name.
+			if (ImGui::TreeNode(r.label.c_str()))
+			{
+				bool changed = false;
+				// DragFloat lets the user drag to adjust or ctrl+click to type a value.
+				changed |= ImGui::DragFloat3("Position",   &r.position.x,    0.05f);
+				changed |= ImGui::DragFloat3("Rotation",   &r.rotationDeg.x, 1.0f, -180.0f, 180.0f);
+				changed |= ImGui::DragFloat ("Scale",      &r.scale,         0.01f,   0.01f, 100.0f);
+				if (changed)
+					r.modelMatrix = buildModelMatrix(r.position, r.rotationDeg, r.scale);
+				ImGui::TreePop();
+			}
+			ImGui::PopID();
+		}
+	}
 
 	ImGui::End();
 

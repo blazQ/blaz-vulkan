@@ -47,7 +47,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
     COMMAND ${SLANGC_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
-        -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name
+        -target spirv -profile spirv_1_5 -emit-spirv-directly -fvk-use-entrypoint-name
+        -capability spvImageQuery -capability spvShaderNonUniformEXT
         -entry vertMain -entry fragMain
         -o ${CMAKE_BINARY_DIR}/shaders/scene.spv
     DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
@@ -66,9 +67,22 @@ add_custom_command(
     COMMENT "Compiling shadow shaders"
     VERBATIM
 )
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/shaders/sky.spv
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/src/shaders/sky.slang
+        -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name
+        -entry skyVert -entry skyFrag
+        -o ${CMAKE_BINARY_DIR}/shaders/sky.spv
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/sky.slang
+    COMMENT "Compiling sky shaders"
+    VERBATIM
+)
 add_custom_target(shaders DEPENDS
     ${CMAKE_BINARY_DIR}/shaders/scene.spv
     ${CMAKE_BINARY_DIR}/shaders/shadow.spv
+    ${CMAKE_BINARY_DIR}/shaders/sky.spv
 )
 
 # Copy textures and models to build directory at configure time
