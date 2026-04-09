@@ -5,11 +5,11 @@ It also documents an effort to better understand low level concepts as a whole a
 So watch how I fail and this repository gets forgotten in a month ;`)
 
 After reaching the Compute Shaders chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), I've decided to diverge from the tutorial itself to implement classical CG effects, like Shadow Mapping, and to implement a GUI which can help me debug and change the state of my renderer, since most of the backbone of how a basic Vulkan application has been dealt with.
-I'm integrating this study with well known resources, like learn-opengl.com, for a reference implementation of most of the effect. After I'll have implemeneted a complete renderer with a couple of interesting effects, I'll proceed with the rest of the tutorial.
+I'm integrating this study with well known resources, like learn-opengl.com, for a reference implementation of most of the effects. After implementing a complete renderer with a couple of interesting effects, I'll proceed with the rest of the tutorial.
 
 My objective is to have a commit a day, and see where it goes. So far I've been able to exceed this during weekends, but I failed during intense weekdays at my daily job.
 
-I'll eventually clean up this readme, but for the time being relevant notes on the API itself will be in the [notes](./notes) folder.
+I'll eventually clean up this readme, but, for the time being, relevant notes on the API itself will be in the [notes](./notes) folder.
 
 ## Building
 
