@@ -51,7 +51,7 @@ git submodule update --init
 #    copies textures/ and models/ into _build/
 cmake -S . -B _build -DCMAKE_BUILD_TYPE=<build-type>
 
-# 2. Build: compiles shaders (shader.slang -> _build/shaders/slang.spv),
+# 2. Build: compiles shaders (scene.slang, shadow.slang, sky.slang -> _build/shaders/*.spv),
 #    compiles ImGui sources and the C++ executable to _build/main
 cmake --build _build
 
@@ -67,13 +67,49 @@ cd _build && ./main
   <img src="./media/shadow_maps.gif" alt="Shadow Maps" width="80%" />
 </div>
 
-- JSON scene descriptor (color, size per object)
-- Multisampling, mipmapping
-- Shadow mapping (depth pass with a dedicated pipeline) 
-- Diffuse and ambient lighting with normals
-- Light orbiting via keyboard commands
-- Dear ImGui integration
-- Will try to abstract and reorganize a bit more, currently only abstracted Device and Swapchain.
+<div align="center">
+  <img src="./media/screenshots/normal+specular+pom+tonemapping+skybox.png" alt="Shadow Maps" width="80%" />
+</div>
+
+
+### Rendering
+
+- **Shadow mapping** — dedicated depth pre-pass, 9-tap PCF filtering, slope-scale bias (tweakable min/max via ImGui to balance acne vs. peter panning)
+- **Blinn-Phong lighting** — directional light with shadow casting, diffuse + ambient + specular
+- **Specular maps** — per-texel tinted specular intensity (RGB), falls back to global specular strength slider
+- **Normal mapping** — tangent-space normal maps; tangent vectors computed analytically for procedural meshes and via Gram-Schmidt for OBJ models, stored as `float4` with bitangent sign in `w`
+- **Parallax Occlusion Mapping (POM)** — adaptive linear raymarch (8–32 steps) + 5-step binary refinement in tangent space; depth scale and step counts tunable in ImGui; activated per-object via `"heightMap"` in scene JSON
+- **Point lights** — up to 4, polynomial `(1-(d/r)²)²` falloff, no shadow casting (by design); add/remove at runtime via ImGui
+- **Procedural skybox** — fullscreen-triangle pass reconstructing view rays from `invProj`/`invViewRot`; three-zone gradient (ground/horizon/zenith) + sun disk; colors configurable in ImGui and scene JSON
+- **ACES filmic tonemapping** — exposure control; toggle on/off at runtime
+- **MSAA** — configurable sample count up to hardware max, live-switchable in ImGui
+
+### Scene
+
+- **JSON scene descriptor** — objects with mesh (`cube`, `plane`, or OBJ path), position, rotation, scale, texture, specularMap, normalMap, heightMap, vertex color; skybox colors and point lights also declared in JSON
+- **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"
+- **Per-object transform editing** — position, rotation (XYZ Euler), uniform scale via ImGui drag sliders, model matrix rebuilt on change
+- **OBJ loading** — via tinyobjloader; tangent vectors computed per-triangle from UV deltas and accumulated + orthogonalised per vertex
+
+### Camera & controls
+
+- **Free-fly camera** — hold RMB to enter fly mode (cursor captured), WASD + QE for movement, mouse for look; Z-up spherical coordinates
+- **Camera parameters** — position, yaw, pitch, speed, sensitivity editable in ImGui
+
+### Infrastructure
+
+- **Dynamic rendering** (`VK_KHR_dynamic_rendering`) — no render pass objects; shadow, scene, sky, and ImGui each in their own `beginRendering`/`endRendering` block
+- **Vulkan 1.2 features** — `descriptorIndexing`, `runtimeDescriptorArray`, `shaderSampledImageArrayNonUniformIndexing`, `scalarBlockLayout`
+- **Swapchain** and **Device** abstracted into their own classes
+- **Dear ImGui** integration with dynamic rendering backend
+
+### Next steps
+- Bloom
+- Fog
+- Renderer is currently a 2k lines mess which requires some refactoring
+- Render graph / frame graph abstraction since recordCommandBuffer function is getting waaaay to long
+- Load scene sfrom OBJ with multiple objects
+- SSAO (requires G-Buffer and some pipeline restructuring)
 
 ---
 
