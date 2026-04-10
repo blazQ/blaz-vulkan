@@ -48,7 +48,14 @@ add_custom_command(
     COMMAND ${SLANGC_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
         -target spirv -profile spirv_1_5 -emit-spirv-directly -fvk-use-entrypoint-name
-        -capability spvImageQuery -capability spvShaderNonUniformEXT
+        -g0
+        -capability spvImageQuery
+        -capability spvShaderNonUniformEXT
+        -capability spvDerivativeControl
+        -capability spvImageGatherExtended
+        -capability spvSparseResidency
+        -capability spvMinLod
+        -capability spvFragmentFullyCoveredEXT
         -entry vertMain -entry fragMain
         -o ${CMAKE_BINARY_DIR}/shaders/scene.spv
     DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/scene.slang
@@ -92,6 +99,8 @@ file(COPY ${CMAKE_SOURCE_DIR}/assets/scenes DESTINATION ${CMAKE_BINARY_DIR})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/extern/imgui)
 
+add_subdirectory(extern/fastgltf)
+
 add_executable(main src/main.cpp src/VulkanRenderer.cpp src/Camera.cpp src/Scene.cpp src/Device.cpp src/Swapchain.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -104,7 +113,7 @@ set_target_properties(main PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
-target_link_libraries(main PRIVATE Vulkan::cppm glfw)
+target_link_libraries(main PRIVATE Vulkan::cppm glfw fastgltf)
 target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/extern/nlohmann-json/include)
 target_compile_definitions(main PRIVATE VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS)

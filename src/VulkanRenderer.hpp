@@ -97,6 +97,9 @@ private:
         glm::vec4 lightCounts;           // x=number of active point lights
         glm::vec4 shadowParams;          // x=biasMin, y=biasMax (slope-scale shadow bias range)
         glm::vec4 pomParams;             // x=depthScale, y=minSteps, z=maxSteps
+        // Fog
+        glm::vec4 fogParams;             // x=density, y=heightFalloff, z=maxOpacity
+        glm::vec4 fogColor;              // xyz=linear RGB fog color
         // Sky ray reconstruction (used by sky.slang)
         glm::mat4 invProj;               // inverse of proj
         glm::mat4 invViewRot;            // inverse of view rotation (translation zeroed)
@@ -168,7 +171,7 @@ private:
 
     // Bindless texture array — all loaded textures live here.
     // Each Renderable holds an index into this vector.
-    static constexpr uint32_t MAX_TEXTURES = 64;
+    static constexpr uint32_t MAX_TEXTURES = 512;
     std::vector<Texture> textures;
     std::unordered_map<std::string, uint32_t> textureCache;
 
@@ -204,11 +207,22 @@ private:
     // Too low  → shadow acne (surface self-shadows with noise).
     float shadowBiasMin = 0.0005f;
     float shadowBiasMax = 0.003f;
+    float shadowOrthoSize = 20.0f;  // half-extent of the light ortho frustum
+    float shadowNear      = 0.1f;
+    float shadowFar       = 100.0f;
 
     // Parallax Occlusion Mapping
     float pomDepthScale = 0.05f;   // how tall the displacement appears (world units)
     float pomMinSteps   = 8.0f;    // steps when looking straight at the surface
     float pomMaxSteps   = 32.0f;   // steps at grazing angles
+
+    // Fog
+    bool      fogEnabled      = true;
+    float     fogDensity      = 0.02f;         // higher = thicker, shorter visibility
+    float     fogHeightFalloff= 0.3f;          // higher = fog thins out faster with altitude
+    float     fogMaxOpacity   = 1.0f;          // clamp fog factor (< 1 keeps distant objects visible)
+    bool      fogSyncSky      = true;          // keep fog color locked to sky horizon color
+    glm::vec3 fogColor        = {0.60f, 0.75f, 0.95f};
 
     // Light animation
     float lightAngle = 0.0f;
@@ -287,7 +301,8 @@ private:
                                vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 
     // Texture
-    uint32_t loadTexture(const std::string &path);
+    uint32_t loadTexture(const std::string &path, bool linearFormat = false);
+    uint32_t loadTextureFromMemory(const std::vector<uint8_t> &bytes, bool linearFormat = false);
     void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat,
                          int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 

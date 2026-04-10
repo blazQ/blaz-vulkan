@@ -4,3 +4,6 @@
 [submodule "extern/nlohmann-json"]
 	path = extern/nlohmann-json
 	url = https://github.com/nlohmann/json
+[submodule "external/fastgltf"]
+	path = extern/fastgltf
+	url = https://github.com/spnda/fastgltf.git

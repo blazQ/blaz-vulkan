@@ -24,7 +24,7 @@ The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system l
 
 ### Clone
 
-This repository uses git submodules (Dear ImGui). Clone with:
+This repository uses git submodules (Dear ImGui, fastgltf). Clone with:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -64,11 +64,15 @@ cd _build && ./main
 ## Current state
 
 <div align="center">
-  <img src="./media/shadow_maps.gif" alt="Shadow Maps" width="80%" />
+  <img src="./media/screenshots/sponza_loaded.png" alt="Sponza loaded via GLTF" width="80%" />
 </div>
 
 <div align="center">
-  <img src="./media/screenshots/normal+specular+pom+tonemapping+skybox.png" alt="Shadow Maps" width="80%" />
+  <img src="./media/screenshots/normal+specular+pom+tonemapping+skybox.png" alt="Normal mapping, POM, tonemapping and skybox" width="80%" />
+</div>
+
+<div align="center">
+  <img src="./media/shadow_maps.gif" alt="Shadow Maps" width="80%" />
 </div>
 
 
@@ -83,13 +87,15 @@ cd _build && ./main
 - **Procedural skybox** — fullscreen-triangle pass reconstructing view rays from `invProj`/`invViewRot`; three-zone gradient (ground/horizon/zenith) + sun disk; colors configurable in ImGui and scene JSON
 - **ACES filmic tonemapping** — exposure control; toggle on/off at runtime
 - **MSAA** — configurable sample count up to hardware max, live-switchable in ImGui
+- **Exponential height fog** — density, height falloff, and max-opacity controls in ImGui; color optionally locked to the sky horizon color for seamless blending
 
 ### Scene
 
-- **JSON scene descriptor** — objects with mesh (`cube`, `plane`, or OBJ path), position, rotation, scale, texture, specularMap, normalMap, heightMap, vertex color; skybox colors and point lights also declared in JSON
-- **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"
+- **JSON scene descriptor** — objects with mesh (`cube`, `plane`, `sphere`, or file path), position, rotation, scale, texture, specularMap, normalMap, heightMap, vertex color; skybox colors and point lights also declared in JSON
+- **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"; up to 512 slots
 - **Per-object transform editing** — position, rotation (XYZ Euler), uniform scale via ImGui drag sliders, model matrix rebuilt on change
 - **OBJ loading** — via tinyobjloader; tangent vectors computed per-triangle from UV deltas and accumulated + orthogonalised per vertex
+- **GLTF/GLB loading** — via fastgltf; reads all primitives with their per-mesh transforms; extracts baseColor, normalMap, and metallicRoughness textures; handles both external image files and embedded GLB buffers; optional Y-up to Z-up axis remap
 
 ### Camera & controls
 
@@ -103,13 +109,13 @@ cd _build && ./main
 - **Swapchain** and **Device** abstracted into their own classes
 - **Dear ImGui** integration with dynamic rendering backend
 
-### Next steps
-- Bloom
-- Fog
-- Renderer is currently a 2k lines mess which requires some refactoring
-- Render graph / frame graph abstraction since recordCommandBuffer function is getting waaaay to long
-- Load scene sfrom OBJ with multiple objects
-- SSAO (requires G-Buffer and some pipeline restructuring)
+### Future developments
+
+The immediate goal is to consolidate and clean up what's here before adding more features. Current thoughts:
+
+- Replace Blinn-Phong with a physically-based BXDF (Cook-Torrance or similar), using the metallic-roughness maps already extracted by the GLTF loader
+- Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts
+- Revisit implemented techniques to fix edge cases (shadow map coverage for large scenes, POM artifacts at silhouettes) and understand them better
 
 ---
 

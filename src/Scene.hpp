@@ -22,6 +22,22 @@ struct Vertex
     }
 };
 
+struct GltfImage {
+    std::string          path;  // non-empty = external file
+    std::vector<uint8_t> bytes; // non-empty = embedded GLB image
+};
+
+struct GltfPrimitive {
+    std::vector<Vertex>   vertices;
+    std::vector<uint32_t> indices;
+    glm::mat4             transform;
+    GltfImage             baseColor;
+    GltfImage             normalMap;
+    GltfImage             metallicRoughness;
+};
+
+
+
 // Hash for Vertex — needed by loadOBJ to deduplicate vertices.
 template <>
 struct std::hash<Vertex>
@@ -45,4 +61,10 @@ struct std::hash<Vertex>
 
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeCube(glm::vec3 color, float size);
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color, float size);
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::string &path);
+// size = radius. sectors = longitude divisions, stacks = latitude divisions.
+// Normals point outward; tangents follow the direction of increasing longitude.
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeSphere(glm::vec3 color, float radius,
+                                                                   uint32_t sectors = 32,
+                                                                   uint32_t stacks  = 16);
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::string &path, bool yUpToZUp = false);
+std::vector<GltfPrimitive> loadGLTF(const std::string& path, bool yUpToZUp = false);

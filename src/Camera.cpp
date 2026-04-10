@@ -26,7 +26,7 @@ glm::mat4 Camera::getViewMatrix() const
 
 glm::mat4 Camera::getProjectionMatrix(float aspectRatio) const
 {
-    glm::mat4 proj = glm::perspective(glm::radians(75.0f), aspectRatio, 0.1f, 500.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(75.0f), aspectRatio, 0.5f, 5000.0f);
     proj[1][1] *= -1; // Vulkan Y-axis flip
     return proj;
 }

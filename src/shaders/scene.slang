@@ -18,6 +18,8 @@ struct UniformBuffer {
     float4 lightCounts;         // x=number of active point lights
     float4 shadowParams;        // x=biasMin, y=biasMax
     float4 pomParams;           // x=depthScale, y=minSteps, z=maxSteps
+    float4 fogParams;           // x=density, y=heightFalloff, z=maxOpacity  (density=0 → no fog)
+    float4 fogColor;            // xyz=linear RGB fog color
 };
 
 // ACES filmic tonemapping approximation (Krzysztof Narkowicz).
@@ -267,6 +269,29 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
                          : 0.0;
 
         color += att * plColor * (baseColor * plDiffuse + specMapColor * plSpec);
+    }
+
+    // --- Fog ---
+    // Applied in linear HDR space before tonemapping so the fog color goes through
+    // the same ACES curve as the scene — avoids a mismatched gamma/tone response.
+    //
+    // Exponential height fog: fog is denser near the ground and thins with altitude.
+    //   fogFactor = 1 - exp(-density * dist * heightAttenuation)
+    //   heightAtt = exp(-heightFalloff * max(worldPos.z, 0))
+    //
+    // Setting density = 0 (via CPU when fog is disabled) makes fogFactor = 0,
+    // which skips the blend with no extra shader branch.
+    {
+        float fogDensity      = ubo.fogParams.x;
+        float fogHeightFalloff= ubo.fogParams.y;
+        float fogMaxOpacity   = ubo.fogParams.z;
+
+        float dist      = length(ubo.cameraPos.xyz - vertIn.fragWorldPos);
+        float heightAtt = exp(-fogHeightFalloff * max(vertIn.fragWorldPos.z, 0.0));
+        float fogFactor = 1.0 - exp(-fogDensity * dist * heightAtt);
+              fogFactor = clamp(fogFactor, 0.0, fogMaxOpacity);
+
+        color = lerp(color, ubo.fogColor.xyz, fogFactor);
     }
 
     // Apply exposure then tonemap into [0,1] linear range.

@@ -25,6 +25,8 @@ struct SkyUBO {
     float4   lightCounts;
     float4   shadowParams;      // x=biasMin, y=biasMax (unused by sky, but must match layout)
     float4   pomParams;         // x=depthScale, y=minSteps, z=maxSteps (unused by sky)
+    float4   fogParams;         // (unused by sky, must match layout)
+    float4   fogColor;          // (unused by sky, must match layout)
     float4x4 invProj;           // inverse of the projection matrix
     float4x4 invViewRot;        // inverse of view rotation (translation zeroed)
 };

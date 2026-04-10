@@ -26,13 +26,10 @@
 
     "objects": [
         {
-            "mesh":        "plane",
+            "mesh":        "models/sponza.glb",
+            "yUpToZUp":   true,
             "position":    [0.0, 0.0, 0.0],
-            "size":        1.0,
-            "texture":     "textures/rock.jpg",
-            "specularMap": "textures/rock_specular.jpg",
-            "normalMap":   "textures/rock_normal.jpg",
-            "heightMap":   "textures/rock_height.jpg"
+            "rotation":    [0.0, 0.0, 0.0]
         }
     ]
 }

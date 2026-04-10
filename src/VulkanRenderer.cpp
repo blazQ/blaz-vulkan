@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <assert.h>
+#include <filesystem>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -29,10 +30,10 @@ vk::VertexInputBindingDescription VulkanRenderer::getVertexBindingDescription()
 std::array<vk::VertexInputAttributeDescription, 5> VulkanRenderer::getVertexAttributeDescriptions()
 {
 	return {
-		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, pos)),
-		vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, color)),
-		vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat,     offsetof(Vertex, texCoord)),
-		vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat,  offsetof(Vertex, normal)),
+		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
+		vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
+		vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord)),
+		vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal)),
 		vk::VertexInputAttributeDescription(4, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Vertex, tangent))};
 }
 
@@ -122,7 +123,7 @@ void VulkanRenderer::initVulkan()
 	// --- Descriptors ---
 	createDescriptorPool();
 	createDescriptorSets();
-	createSkyDescriptorSets();   // must come after createUniformBuffers
+	createSkyDescriptorSets(); // must come after createUniformBuffers
 
 	// --- Synchronisation ---
 	createCommandBuffers();
@@ -145,9 +146,9 @@ void VulkanRenderer::createDescriptorSetLayout()
 			vk::ShaderStageFlagBits::eFragment, nullptr)};
 
 	std::array<vk::DescriptorBindingFlags, 3> bindingFlags = {
-		vk::DescriptorBindingFlags{},                          // binding 0: UBO, no special flags
-		vk::DescriptorBindingFlagBits::ePartiallyBound,        // binding 1: texture array
-		vk::DescriptorBindingFlags{}};                         // binding 2: shadow map
+		vk::DescriptorBindingFlags{},					// binding 0: UBO, no special flags
+		vk::DescriptorBindingFlagBits::ePartiallyBound, // binding 1: texture array
+		vk::DescriptorBindingFlags{}};					// binding 2: shadow map
 
 	vk::DescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{
 		.bindingCount = static_cast<uint32_t>(bindingFlags.size()),
@@ -346,10 +347,10 @@ void VulkanRenderer::createSkyDescriptorSetLayout()
 {
 	// Sky only needs the UBO (binding 0) to access invProj / invViewRot / lightDir.
 	vk::DescriptorSetLayoutBinding uboBinding{
-		.binding         = 0,
-		.descriptorType  = vk::DescriptorType::eUniformBuffer,
+		.binding = 0,
+		.descriptorType = vk::DescriptorType::eUniformBuffer,
 		.descriptorCount = 1,
-		.stageFlags      = vk::ShaderStageFlagBits::eFragment};
+		.stageFlags = vk::ShaderStageFlagBits::eFragment};
 	vk::DescriptorSetLayoutCreateInfo info{.bindingCount = 1, .pBindings = &uboBinding};
 	skyDescriptorSetLayout = vk::raii::DescriptorSetLayout(vulkanDevice->getLogicalDevice(), info);
 }
@@ -358,19 +359,19 @@ void VulkanRenderer::createSkyPipeline()
 {
 	vk::raii::ShaderModule skyShader = createShaderModule(readFile("shaders/sky.spv"));
 	vk::PipelineShaderStageCreateInfo stages[2] = {
-		{.stage = vk::ShaderStageFlagBits::eVertex,   .module = skyShader, .pName = "skyVert"},
+		{.stage = vk::ShaderStageFlagBits::eVertex, .module = skyShader, .pName = "skyVert"},
 		{.stage = vk::ShaderStageFlagBits::eFragment, .module = skyShader, .pName = "skyFrag"}};
 
 	// Sky push constants: SkyPushConstants (64 bytes), fragment stage only.
 	vk::PushConstantRange pushRange{
 		.stageFlags = vk::ShaderStageFlagBits::eFragment,
-		.offset     = 0,
-		.size       = sizeof(SkyPushConstants)};
+		.offset = 0,
+		.size = sizeof(SkyPushConstants)};
 	vk::PipelineLayoutCreateInfo layoutInfo{
-		.setLayoutCount         = 1,
-		.pSetLayouts            = &*skyDescriptorSetLayout,
+		.setLayoutCount = 1,
+		.pSetLayouts = &*skyDescriptorSetLayout,
 		.pushConstantRangeCount = 1,
-		.pPushConstantRanges    = &pushRange};
+		.pPushConstantRanges = &pushRange};
 	skyPipelineLayout = vk::raii::PipelineLayout(vulkanDevice->getLogicalDevice(), layoutInfo);
 
 	// No vertex input — fullscreen triangle is generated from SV_VertexID.
@@ -381,81 +382,81 @@ void VulkanRenderer::createSkyPipeline()
 	std::vector<vk::DynamicState> dynStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
 	vk::PipelineDynamicStateCreateInfo dynState{
 		.dynamicStateCount = static_cast<uint32_t>(dynStates.size()),
-		.pDynamicStates    = dynStates.data()};
+		.pDynamicStates = dynStates.data()};
 	vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
 
 	vk::PipelineRasterizationStateCreateInfo rasterizer{
 		.polygonMode = vk::PolygonMode::eFill,
-		.cullMode    = vk::CullModeFlagBits::eNone,   // fullscreen tri, no culling needed
-		.lineWidth   = 1.0f};
+		.cullMode = vk::CullModeFlagBits::eNone, // fullscreen tri, no culling needed
+		.lineWidth = 1.0f};
 	vk::PipelineMultisampleStateCreateInfo multisampling{
 		.rasterizationSamples = msaaSamples};
 
 	vk::PipelineColorBlendAttachmentState colorBlendAtt{
-		.blendEnable    = vk::False,
+		.blendEnable = vk::False,
 		.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-		                  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+						  vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
 	vk::PipelineColorBlendStateCreateInfo colorBlending{
 		.attachmentCount = 1, .pAttachments = &colorBlendAtt};
 
 	// Depth: test against scene geometry (sky at depth 1.0 passes where nothing was drawn),
 	// but don't write depth so scene geometry isn't overwritten.
 	vk::PipelineDepthStencilStateCreateInfo depthStencil{
-		.depthTestEnable  = vk::True,
+		.depthTestEnable = vk::True,
 		.depthWriteEnable = vk::False,
-		.depthCompareOp   = vk::CompareOp::eLessOrEqual};
+		.depthCompareOp = vk::CompareOp::eLessOrEqual};
 
 	vk::Format depthFormat = vulkanDevice->findDepthFormat();
 	vk::PipelineRenderingCreateInfo renderingInfo{
-		.colorAttachmentCount    = 1,
+		.colorAttachmentCount = 1,
 		.pColorAttachmentFormats = &swapchain->getSurfaceFormat().format,
-		.depthAttachmentFormat   = depthFormat};
+		.depthAttachmentFormat = depthFormat};
 
 	vk::GraphicsPipelineCreateInfo pipelineInfo{
-		.pNext               = &renderingInfo,
-		.stageCount          = 2,
-		.pStages             = stages,
-		.pVertexInputState   = &vertexInput,
+		.pNext = &renderingInfo,
+		.stageCount = 2,
+		.pStages = stages,
+		.pVertexInputState = &vertexInput,
 		.pInputAssemblyState = &inputAssembly,
-		.pViewportState      = &viewportState,
+		.pViewportState = &viewportState,
 		.pRasterizationState = &rasterizer,
-		.pMultisampleState   = &multisampling,
-		.pDepthStencilState  = &depthStencil,
-		.pColorBlendState    = &colorBlending,
-		.pDynamicState       = &dynState,
-		.layout              = skyPipelineLayout};
+		.pMultisampleState = &multisampling,
+		.pDepthStencilState = &depthStencil,
+		.pColorBlendState = &colorBlending,
+		.pDynamicState = &dynState,
+		.layout = skyPipelineLayout};
 	skyPipeline = vk::raii::Pipeline(vulkanDevice->getLogicalDevice(), nullptr, pipelineInfo);
 }
 
 void VulkanRenderer::createSkyDescriptorSets()
 {
 	vk::DescriptorPoolSize uboPoolSize{
-		.type            = vk::DescriptorType::eUniformBuffer,
+		.type = vk::DescriptorType::eUniformBuffer,
 		.descriptorCount = MAX_FRAMES_IN_FLIGHT};
 	vk::DescriptorPoolCreateInfo poolInfo{
-		.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-		.maxSets       = MAX_FRAMES_IN_FLIGHT,
+		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+		.maxSets = MAX_FRAMES_IN_FLIGHT,
 		.poolSizeCount = 1,
-		.pPoolSizes    = &uboPoolSize};
+		.pPoolSizes = &uboPoolSize};
 	skyDescriptorPool = vk::raii::DescriptorPool(vulkanDevice->getLogicalDevice(), poolInfo);
 
 	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *skyDescriptorSetLayout);
 	skyDescriptorSets = vulkanDevice->getLogicalDevice().allocateDescriptorSets(
 		vk::DescriptorSetAllocateInfo{
-			.descriptorPool     = skyDescriptorPool,
+			.descriptorPool = skyDescriptorPool,
 			.descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
-			.pSetLayouts        = layouts.data()});
+			.pSetLayouts = layouts.data()});
 
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 	{
 		vk::DescriptorBufferInfo buf{uniformBuffers[i], 0, sizeof(UniformBufferObject)};
 		vulkanDevice->getLogicalDevice().updateDescriptorSets(
 			vk::WriteDescriptorSet{
-				.dstSet          = skyDescriptorSets[i],
-				.dstBinding      = 0,
+				.dstSet = skyDescriptorSets[i],
+				.dstBinding = 0,
 				.descriptorCount = 1,
-				.descriptorType  = vk::DescriptorType::eUniformBuffer,
-				.pBufferInfo     = &buf},
+				.descriptorType = vk::DescriptorType::eUniformBuffer,
+				.pBufferInfo = &buf},
 			{});
 	}
 }
@@ -745,7 +746,7 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 // Loads a texture from disk, uploads it to the GPU, creates a view and sampler,
 // appends it to the global textures array, and returns its index. Returns the
 // cached index immediately if the same path was already loaded.
-uint32_t VulkanRenderer::loadTexture(const std::string &path)
+uint32_t VulkanRenderer::loadTexture(const std::string &path, bool linearFormat)
 {
 	auto it = textureCache.find(path);
 	if (it != textureCache.end())
@@ -758,7 +759,8 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path)
 		throw std::runtime_error("failed to load texture: " + path);
 
 	uint32_t mipLevels = static_cast<uint32_t>(
-		std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+							 std::floor(std::log2(std::max(texWidth, texHeight)))) +
+						 1;
 	vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
 	vk::raii::Buffer stagingBuffer({});
@@ -772,9 +774,11 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path)
 	stagingBufferMemory.unmapMemory();
 	stbi_image_free(pixels);
 
+	vk::Format fmt = linearFormat ? vk::Format::eR8G8B8A8Unorm : vk::Format::eR8G8B8A8Srgb;
+
 	Texture tex;
 	createImage(texWidth, texHeight, mipLevels, vk::SampleCountFlagBits::e1,
-				vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
+				fmt, vk::ImageTiling::eOptimal,
 				vk::ImageUsageFlagBits::eTransferSrc |
 					vk::ImageUsageFlagBits::eTransferDst |
 					vk::ImageUsageFlagBits::eSampled,
@@ -784,9 +788,76 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path)
 	copyBufferToImage(stagingBuffer, tex.image,
 					  static_cast<uint32_t>(texWidth),
 					  static_cast<uint32_t>(texHeight));
-	generateMipmaps(tex.image, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
+	generateMipmaps(tex.image, fmt, texWidth, texHeight, mipLevels);
 
-	tex.view = vulkanDevice->createImageView(*tex.image, vk::Format::eR8G8B8A8Srgb,
+	tex.view = vulkanDevice->createImageView(*tex.image, fmt,
+											 vk::ImageAspectFlagBits::eColor, mipLevels);
+
+	vk::PhysicalDeviceProperties props = vulkanDevice->getPhysicalDevice().getProperties();
+	vk::SamplerCreateInfo samplerInfo{
+		.magFilter = vk::Filter::eLinear,
+		.minFilter = vk::Filter::eLinear,
+		.mipmapMode = vk::SamplerMipmapMode::eLinear,
+		.addressModeU = vk::SamplerAddressMode::eRepeat,
+		.addressModeV = vk::SamplerAddressMode::eRepeat,
+		.addressModeW = vk::SamplerAddressMode::eRepeat,
+		.anisotropyEnable = vk::True,
+		.maxAnisotropy = props.limits.maxSamplerAnisotropy,
+		.compareOp = vk::CompareOp::eAlways,
+		.maxLod = vk::LodClampNone,
+		.borderColor = vk::BorderColor::eIntOpaqueBlack,
+		.unnormalizedCoordinates = vk::False};
+	tex.sampler = vk::raii::Sampler(vulkanDevice->getLogicalDevice(), samplerInfo);
+
+	uint32_t index = static_cast<uint32_t>(textures.size());
+	textures.push_back(std::move(tex));
+	textureCache[path] = index;
+	return index;
+}
+
+uint32_t VulkanRenderer::loadTextureFromMemory(const std::vector<uint8_t> &bytes, bool linearFormat)
+{
+	int texWidth, texHeight, texChannels;
+	stbi_uc *pixels = stbi_load_from_memory(bytes.data(),
+											static_cast<int>(bytes.size()),
+											&texWidth, &texHeight,
+											&texChannels, STBI_rgb_alpha);
+	if (!pixels)
+		throw std::runtime_error("loadTextureFromMemory: stbi decode failed");
+
+	uint32_t mipLevels = static_cast<uint32_t>(
+							 std::floor(std::log2(std::max(texWidth, texHeight)))) +
+						 1;
+	vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+	vk::raii::Buffer stagingBuffer({});
+	vk::raii::DeviceMemory stagingBufferMemory({});
+	createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc,
+				 vk::MemoryPropertyFlagBits::eHostVisible |
+					 vk::MemoryPropertyFlagBits::eHostCoherent,
+				 stagingBuffer, stagingBufferMemory);
+	void *data = stagingBufferMemory.mapMemory(0, imageSize);
+	memcpy(data, pixels, imageSize);
+	stagingBufferMemory.unmapMemory();
+	stbi_image_free(pixels);
+
+	vk::Format fmt = linearFormat ? vk::Format::eR8G8B8A8Unorm : vk::Format::eR8G8B8A8Srgb;
+
+	Texture tex;
+	createImage(texWidth, texHeight, mipLevels, vk::SampleCountFlagBits::e1,
+				fmt, vk::ImageTiling::eOptimal,
+				vk::ImageUsageFlagBits::eTransferSrc |
+					vk::ImageUsageFlagBits::eTransferDst |
+					vk::ImageUsageFlagBits::eSampled,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, tex.image, tex.memory);
+	transitionImageLayout(tex.image, vk::ImageLayout::eUndefined,
+						  vk::ImageLayout::eTransferDstOptimal);
+	copyBufferToImage(stagingBuffer, tex.image,
+					  static_cast<uint32_t>(texWidth),
+					  static_cast<uint32_t>(texHeight));
+	generateMipmaps(tex.image, fmt, texWidth, texHeight, mipLevels);
+
+	tex.view = vulkanDevice->createImageView(*tex.image, fmt,
 											 vk::ImageAspectFlagBits::eColor, mipLevels);
 
 	vk::PhysicalDeviceProperties props = vulkanDevice->getPhysicalDevice().getProperties();
@@ -807,7 +878,6 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path)
 
 	uint32_t index = static_cast<uint32_t>(textures.size());
 	textures.push_back(std::move(tex));
-	textureCache[path] = index;
 	return index;
 }
 
@@ -900,7 +970,6 @@ void VulkanRenderer::generateMipmaps(vk::raii::Image &image, vk::Format imageFor
 	endSingleTimeCommands(*commandBuffer);
 }
 
-
 void VulkanRenderer::uploadRenderable(Renderable &r, const std::vector<Vertex> &verts,
 									  const std::vector<uint32_t> &idxs)
 {
@@ -971,12 +1040,12 @@ void VulkanRenderer::loadScene()
 		if (s.contains("horizonColor"))
 			skyPush.horizonColor = {s["horizonColor"][0], s["horizonColor"][1], s["horizonColor"][2], 1.0f};
 		if (s.contains("zenithColor"))
-			skyPush.zenithColor  = {s["zenithColor"][0],  s["zenithColor"][1],  s["zenithColor"][2],  1.0f};
+			skyPush.zenithColor = {s["zenithColor"][0], s["zenithColor"][1], s["zenithColor"][2], 1.0f};
 		if (s.contains("groundColor"))
-			skyPush.groundColor  = {s["groundColor"][0],  s["groundColor"][1],  s["groundColor"][2],  1.0f};
+			skyPush.groundColor = {s["groundColor"][0], s["groundColor"][1], s["groundColor"][2], 1.0f};
 		if (s.contains("sunColor"))
-			skyPush.sunParams    = {s["sunColor"][0], s["sunColor"][1], s["sunColor"][2],
-			                        s.value("sunSize", 0.9998f)};
+			skyPush.sunParams = {s["sunColor"][0], s["sunColor"][1], s["sunColor"][2],
+								 s.value("sunSize", 0.9998f)};
 	}
 
 	// Optional point lights (overrides the compiled-in defaults when present)
@@ -987,12 +1056,12 @@ void VulkanRenderer::loadScene()
 		{
 			PointLightData d;
 			if (pl.contains("position"))
-				d.position  = {pl["position"][0], pl["position"][1], pl["position"][2]};
+				d.position = {pl["position"][0], pl["position"][1], pl["position"][2]};
 			if (pl.contains("color"))
-				d.color     = {pl["color"][0], pl["color"][1], pl["color"][2]};
-			d.intensity     = pl.value("intensity", 3.0f);
-			d.radius        = pl.value("radius",    8.0f);
-			d.enabled       = pl.value("enabled",   true);
+				d.color = {pl["color"][0], pl["color"][1], pl["color"][2]};
+			d.intensity = pl.value("intensity", 3.0f);
+			d.radius = pl.value("radius", 8.0f);
+			d.enabled = pl.value("enabled", true);
 			pointLights.push_back(d);
 		}
 	}
@@ -1006,17 +1075,17 @@ void VulkanRenderer::loadScene()
 							  : glm::vec3{1.0f, 1.0f, 1.0f};
 		float size = obj.value("size", 1.0f);
 		std::optional<std::string> texturePath = obj.contains("texture")
-			? std::optional<std::string>{obj["texture"].get<std::string>()}
-			: std::nullopt;
+													 ? std::optional<std::string>{obj["texture"].get<std::string>()}
+													 : std::nullopt;
 		std::optional<std::string> specularMapPath = obj.contains("specularMap")
-			? std::optional<std::string>{obj["specularMap"].get<std::string>()}
-			: std::nullopt;
+														 ? std::optional<std::string>{obj["specularMap"].get<std::string>()}
+														 : std::nullopt;
 		std::optional<std::string> normalMapPath = obj.contains("normalMap")
-			? std::optional<std::string>{obj["normalMap"].get<std::string>()}
-			: std::nullopt;
+													   ? std::optional<std::string>{obj["normalMap"].get<std::string>()}
+													   : std::nullopt;
 		std::optional<std::string> heightMapPath = obj.contains("heightMap")
-			? std::optional<std::string>{obj["heightMap"].get<std::string>()}
-			: std::nullopt;
+													   ? std::optional<std::string>{obj["heightMap"].get<std::string>()}
+													   : std::nullopt;
 
 		// Optional rotation (XYZ Euler angles, degrees) and uniform scale.
 		glm::vec3 rotDeg = obj.contains("rotation")
@@ -1029,19 +1098,61 @@ void VulkanRenderer::loadScene()
 			meshData = makeCube(color, size);
 		else if (mesh == "plane")
 			meshData = makePlane(color, size);
+		else if (mesh == "sphere")
+		{
+			uint32_t sectors = obj.value("sectors", 32u);
+			uint32_t stacks = obj.value("stacks", 16u);
+			meshData = makeSphere(color, size, sectors, stacks);
+		}
 		else
-			meshData = loadOBJ(mesh);
+		{
+			bool yUpToZUp = obj.value("yUpToZUp", false);
+			auto ext = std::filesystem::path(mesh).extension();
+			if (ext == ".gltf" || ext == ".glb")
+			{
+				// glTF yields multiple primitives — each becomes its own Renderable.
+				// They carry their own transforms from the node tree, so we apply
+				// the scene.json position/rotation/scale on top as a parent transform.
+				glm::mat4 parentTransform = buildModelMatrix(pos, rotDeg, scale);
+				for (auto &prim : loadGLTF(mesh, yUpToZUp))
+				{
+					auto resolveSlot = [&](const GltfImage &img, bool linear) -> uint32_t {
+						if (!img.path.empty())  return loadTexture(img.path, linear);
+						if (!img.bytes.empty()) return loadTextureFromMemory(img.bytes, linear);
+						return 0xFFFFu;
+					};
+
+					Renderable r;
+					r.label        = mesh;
+					r.position     = pos;
+					r.rotationDeg  = rotDeg;
+					r.scale        = scale;
+					r.modelMatrix  = parentTransform * prim.transform;
+					r.textureIndex   = resolveSlot(prim.baseColor, false); // sRGB
+					r.normalMapIndex = resolveSlot(prim.normalMap,  true);  // linear
+					r.specularMapIndex    = 0xFFFFu; // metallic-roughness unused until PBR shading
+					r.heightMapIndex      = 0xFFFFu;
+					uploadRenderable(r, prim.vertices, prim.indices);
+					renderables.push_back(std::move(r));
+				}
+				continue; // skip the single-mesh Renderable creation below
+			}
+			else
+			{
+				meshData = loadOBJ(mesh, yUpToZUp);
+			}
+		}
 
 		Renderable r;
-		r.label       = mesh;
-		r.position    = pos;
+		r.label = mesh;
+		r.position = pos;
 		r.rotationDeg = rotDeg;
-		r.scale       = scale;
+		r.scale = scale;
 		r.modelMatrix = buildModelMatrix(pos, rotDeg, scale);
-		r.textureIndex     = texturePath     ? loadTexture(*texturePath)     : 0xFFFFu;
+		r.textureIndex = texturePath ? loadTexture(*texturePath) : 0xFFFFu;
 		r.specularMapIndex = specularMapPath ? loadTexture(*specularMapPath) : 0xFFFFu;
-		r.normalMapIndex   = normalMapPath   ? loadTexture(*normalMapPath)   : 0xFFFFu;
-		r.heightMapIndex   = heightMapPath   ? loadTexture(*heightMapPath)   : 0xFFFFu;
+		r.normalMapIndex = normalMapPath ? loadTexture(*normalMapPath) : 0xFFFFu;
+		r.heightMapIndex = heightMapPath ? loadTexture(*heightMapPath) : 0xFFFFu;
 		uploadRenderable(r, meshData.first, meshData.second);
 		renderables.push_back(std::move(r));
 	}
@@ -1104,10 +1215,9 @@ void VulkanRenderer::createDescriptorSets()
 	std::vector<vk::DescriptorImageInfo> textureInfos;
 	for (const auto &tex : textures)
 	{
-		textureInfos.push_back({
-			.sampler     = *tex.sampler,
-			.imageView   = *tex.view,
-			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal});
+		textureInfos.push_back({.sampler = *tex.sampler,
+								.imageView = *tex.view,
+								.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal});
 	}
 
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -1116,34 +1226,34 @@ void VulkanRenderer::createDescriptorSets()
 											.offset = 0,
 											.range = sizeof(UniformBufferObject)};
 		vk::DescriptorImageInfo shadowMapInfo{
-			.sampler     = *shadowMapSampler,
-			.imageView   = *shadowMapImageView,
+			.sampler = *shadowMapSampler,
+			.imageView = *shadowMapImageView,
 			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
 
 		std::vector<vk::WriteDescriptorSet> descriptorWrites{
 			vk::WriteDescriptorSet{
-				.dstSet          = descriptorSets[i],
-				.dstBinding      = 0,
+				.dstSet = descriptorSets[i],
+				.dstBinding = 0,
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
-				.descriptorType  = vk::DescriptorType::eUniformBuffer,
-				.pBufferInfo     = &bufferInfo},
+				.descriptorType = vk::DescriptorType::eUniformBuffer,
+				.pBufferInfo = &bufferInfo},
 			vk::WriteDescriptorSet{
-				.dstSet          = descriptorSets[i],
-				.dstBinding      = 2,
+				.dstSet = descriptorSets[i],
+				.dstBinding = 2,
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
-				.descriptorType  = vk::DescriptorType::eCombinedImageSampler,
-				.pImageInfo      = &shadowMapInfo}};
+				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+				.pImageInfo = &shadowMapInfo}};
 		if (!textureInfos.empty())
 		{
 			descriptorWrites.push_back(vk::WriteDescriptorSet{
-				.dstSet          = descriptorSets[i],
-				.dstBinding      = 1,
+				.dstSet = descriptorSets[i],
+				.dstBinding = 1,
 				.dstArrayElement = 0,
 				.descriptorCount = static_cast<uint32_t>(textureInfos.size()),
-				.descriptorType  = vk::DescriptorType::eCombinedImageSampler,
-				.pImageInfo      = textureInfos.data()});
+				.descriptorType = vk::DescriptorType::eCombinedImageSampler,
+				.pImageInfo = textureInfos.data()});
 		}
 		vulkanDevice->getLogicalDevice().updateDescriptorSets(descriptorWrites, {});
 	}
@@ -1193,7 +1303,7 @@ void VulkanRenderer::mainLoop()
 		double mx, my;
 		glfwGetCursorPos(window, &mx, &my);
 
-		bool rightHeld    = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+		bool rightHeld = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
 		bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
 
 		if (rightHeld && !imguiWantsMouse)
@@ -1202,7 +1312,7 @@ void VulkanRenderer::mainLoop()
 			{
 				// First frame of camera mode: hide cursor and reset delta to
 				// avoid a sudden jump from wherever the cursor was.
-				cameraMode   = true;
+				cameraMode = true;
 				lastMousePos = {static_cast<float>(mx), static_cast<float>(my)};
 				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 			}
@@ -1346,7 +1456,9 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage)
 		glm::sin(lightAngle) * 8.0f,
 		6.0f);
 	glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	glm::mat4 lightProj = glm::ortho(-10.f, 10.f, -10.f, 10.f, 0.1f, 50.f);
+	glm::mat4 lightProj = glm::ortho(-shadowOrthoSize, shadowOrthoSize,
+	                                  -shadowOrthoSize, shadowOrthoSize,
+	                                  shadowNear, shadowFar);
 	ubo.lightSpaceMatrix = lightProj * lightView;
 	ubo.lightDir = glm::vec4(glm::normalize(lightPos), 0.0f);
 	ubo.cameraPos = glm::vec4(camera.position, 0.0f);
@@ -1355,22 +1467,31 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage)
 	int activeLights = 0;
 	for (const auto &pl : pointLights)
 	{
-		if (!pl.enabled || activeLights >= MAX_POINT_LIGHTS) continue;
-		ubo.pointLightPos[activeLights]   = glm::vec4(pl.position, pl.intensity);
-		ubo.pointLightColor[activeLights] = glm::vec4(pl.color,    pl.radius);
+		if (!pl.enabled || activeLights >= MAX_POINT_LIGHTS)
+			continue;
+		ubo.pointLightPos[activeLights] = glm::vec4(pl.position, pl.intensity);
+		ubo.pointLightColor[activeLights] = glm::vec4(pl.color, pl.radius);
 		activeLights++;
 	}
-	ubo.lightCounts  = glm::vec4(static_cast<float>(activeLights), 0.0f, 0.0f, 0.0f);
+	ubo.lightCounts = glm::vec4(static_cast<float>(activeLights), 0.0f, 0.0f, 0.0f);
 	ubo.shadowParams = glm::vec4(shadowBiasMin, shadowBiasMax, 0.0f, 0.0f);
-	ubo.pomParams    = glm::vec4(pomDepthScale, pomMinSteps, pomMaxSteps, 0.0f);
+	ubo.pomParams = glm::vec4(pomDepthScale, pomMinSteps, pomMaxSteps, 0.0f);
+
+	// Fog: pass density=0 when disabled so the shader's exp() yields fogFactor=0 (no branch needed).
+	// When fogSyncSky is on, the fog color is locked to the sky's horizon so they blend seamlessly.
+	float effectiveDensity = fogEnabled ? fogDensity : 0.0f;
+	if (fogSyncSky)
+		fogColor = glm::vec3(skyPush.horizonColor);
+	ubo.fogParams = glm::vec4(effectiveDensity, fogHeightFalloff, fogMaxOpacity, 0.0f);
+	ubo.fogColor = glm::vec4(fogColor, 1.0f);
 
 	// Sky ray reconstruction matrices.
-	ubo.invProj    = glm::inverse(ubo.proj);
+	ubo.invProj = glm::inverse(ubo.proj);
 	// Rotation-only view: zero the translation column then invert via transpose
 	// (valid because the rotation part of an orthogonal matrix satisfies R^-1 = R^T).
 	glm::mat4 viewRot = ubo.view;
-	viewRot[3]         = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-	ubo.invViewRot     = glm::transpose(viewRot);
+	viewRot[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+	ubo.invViewRot = glm::transpose(viewRot);
 
 	memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
@@ -1384,12 +1505,12 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 	// ---- Shadow pass ----
 	// Transition shadow map to depth attachment for writing
 	recordImageBarrier(*shadowMapImage,
-							vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
-							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-							vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-							vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-							vk::ImageAspectFlagBits::eDepth);
+					   vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+					   vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+					   vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+					   vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+					   vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+					   vk::ImageAspectFlagBits::eDepth);
 
 	vk::ClearValue shadowClear = vk::ClearDepthStencilValue(1.0f, 0);
 	vk::RenderingAttachmentInfo shadowDepthAttachment{
@@ -1426,12 +1547,12 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	// Barrier: shadow map depth attachment → shader read for main pass
 	recordImageBarrier(*shadowMapImage,
-							vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-							vk::AccessFlagBits2::eShaderRead,
-							vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-							vk::PipelineStageFlagBits2::eFragmentShader,
-							vk::ImageAspectFlagBits::eDepth);
+					   vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+					   vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+					   vk::AccessFlagBits2::eShaderRead,
+					   vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+					   vk::PipelineStageFlagBits2::eFragmentShader,
+					   vk::ImageAspectFlagBits::eDepth);
 	// ---- End shadow pass ----
 
 	bool msaaEnabled = msaaSamples != vk::SampleCountFlagBits::e1;
@@ -1459,14 +1580,14 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		vk::ImageAspectFlagBits::eColor);
 
 	recordImageBarrier(*depthImage, vk::ImageLayout::eUndefined,
-							vk::ImageLayout::eDepthAttachmentOptimal,
-							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-							vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-							vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-								vk::PipelineStageFlagBits2::eLateFragmentTests,
-							vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-								vk::PipelineStageFlagBits2::eLateFragmentTests,
-							vk::ImageAspectFlagBits::eDepth);
+					   vk::ImageLayout::eDepthAttachmentOptimal,
+					   vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+					   vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+					   vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+						   vk::PipelineStageFlagBits2::eLateFragmentTests,
+					   vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+						   vk::PipelineStageFlagBits2::eLateFragmentTests,
+					   vk::ImageAspectFlagBits::eDepth);
 
 	vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
 	vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
@@ -1552,8 +1673,8 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyPipeline);
 		commandBuffer.setViewport(
 			0, vk::Viewport{0.0f, 0.0f,
-			                static_cast<float>(swapchain->getExtent().width),
-			                static_cast<float>(swapchain->getExtent().height), 0.0f, 1.0f});
+							static_cast<float>(swapchain->getExtent().width),
+							static_cast<float>(swapchain->getExtent().height), 0.0f, 1.0f});
 		commandBuffer.setScissor(0, vk::Rect2D{{0, 0}, swapchain->getExtent()});
 		commandBuffers[frameIndex].bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics, skyPipelineLayout, 0,
@@ -1565,7 +1686,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 				.setOffset(0)
 				.setSize(sizeof(SkyPushConstants))
 				.setPValues(&skyPush));
-		commandBuffer.draw(3, 1, 0, 0);   // fullscreen triangle, no vertex buffer
+		commandBuffer.draw(3, 1, 0, 0); // fullscreen triangle, no vertex buffer
 	}
 
 	commandBuffer.endRendering();
@@ -1625,16 +1746,16 @@ void VulkanRenderer::recordImageBarrier(vk::Image image, vk::ImageLayout oldLayo
 										vk::ImageAspectFlags aspectFlags)
 {
 	vk::ImageMemoryBarrier2 barrier{
-		.srcStageMask        = srcStageMask,
-		.srcAccessMask       = srcAccessMask,
-		.dstStageMask        = dstStageMask,
-		.dstAccessMask       = dstAccessMask,
-		.oldLayout           = oldLayout,
-		.newLayout           = newLayout,
+		.srcStageMask = srcStageMask,
+		.srcAccessMask = srcAccessMask,
+		.dstStageMask = dstStageMask,
+		.dstAccessMask = dstAccessMask,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image               = image,
-		.subresourceRange    = {aspectFlags, 0, 1, 0, 1}};
+		.image = image,
+		.subresourceRange = {aspectFlags, 0, 1, 0, 1}};
 	commandBuffers[frameIndex].pipelineBarrier2(
 		vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
 }
@@ -1661,7 +1782,7 @@ void VulkanRenderer::rebuildMsaa()
 	depthImage = nullptr;
 	depthImageMemory = nullptr;
 	graphicsPipeline = nullptr;
-	skyPipeline      = nullptr;
+	skyPipeline = nullptr;
 	createDepthResources();
 	createColorResources();
 	createGraphicsPipeline();
@@ -1697,13 +1818,13 @@ void VulkanRenderer::cleanup()
 	commandBuffers.clear();
 	commandPool = nullptr;
 	skyDescriptorSets.clear();
-	skyDescriptorPool      = nullptr;
-	skyPipeline            = nullptr;
-	skyPipelineLayout      = nullptr;
+	skyDescriptorPool = nullptr;
+	skyPipeline = nullptr;
+	skyPipelineLayout = nullptr;
 	skyDescriptorSetLayout = nullptr;
-	shadowPipeline   = nullptr;
+	shadowPipeline = nullptr;
 	graphicsPipeline = nullptr;
-	pipelineLayout   = nullptr;
+	pipelineLayout = nullptr;
 	shadowMapSampler = nullptr;
 	shadowMapImageView = nullptr;
 	shadowMapImage = nullptr;
@@ -1790,17 +1911,20 @@ void VulkanRenderer::drawImGui()
 	// Shadow bias sliders.
 	// biasMin = bias when face is lit head-on (low acne risk, low peter-pan risk).
 	// biasMax = bias at grazing angles (high acne risk without it, peter-pan if too high).
-	ImGui::SliderFloat("Shadow bias min", &shadowBiasMin, 0.0f, 0.01f, "%.4f");
-	ImGui::SliderFloat("Shadow bias max", &shadowBiasMax, 0.0f, 0.02f, "%.4f");
+	ImGui::SliderFloat("Shadow bias min",  &shadowBiasMin,   0.0f,  0.01f,  "%.4f");
+	ImGui::SliderFloat("Shadow bias max",  &shadowBiasMax,   0.0f,  0.02f,  "%.4f");
+	ImGui::SliderFloat("Ortho size",       &shadowOrthoSize, 1.0f,  200.0f, "%.1f");
+	ImGui::SliderFloat("Shadow near",      &shadowNear,      0.01f, 10.0f,  "%.2f");
+	ImGui::SliderFloat("Shadow far",       &shadowFar,       10.0f, 500.0f, "%.1f");
 
 	ImGui::Separator();
 
 	// POM
 	if (ImGui::CollapsingHeader("Parallax (POM)"))
 	{
-		ImGui::SliderFloat("Depth scale", &pomDepthScale, 0.001f, 0.2f,  "%.3f");
-		ImGui::SliderFloat("Min steps",   &pomMinSteps,   4.0f,   16.0f, "%.0f");
-		ImGui::SliderFloat("Max steps",   &pomMaxSteps,   8.0f,   64.0f, "%.0f");
+		ImGui::SliderFloat("Depth scale", &pomDepthScale, 0.001f, 0.2f, "%.3f");
+		ImGui::SliderFloat("Min steps", &pomMinSteps, 4.0f, 16.0f, "%.0f");
+		ImGui::SliderFloat("Max steps", &pomMaxSteps, 8.0f, 64.0f, "%.0f");
 		ImGui::TextDisabled("Assign 'heightMap' in scene.json to activate POM per object.");
 	}
 
@@ -1816,9 +1940,9 @@ void VulkanRenderer::drawImGui()
 	ImGui::Checkbox("Tonemapping (ACES)", &tonemapping);
 	if (tonemapping)
 		ImGui::SliderFloat("Exposure", &exposure, 0.1f, 10.0f);
-	ImGui::SliderFloat("Ambient",          &ambient,          0.0f,  1.0f);
-	ImGui::SliderFloat("Specular strength",&specularStrength, 0.0f,  1.0f);
-	ImGui::SliderFloat("Shininess",        &shininess,        1.0f, 256.0f);
+	ImGui::SliderFloat("Ambient", &ambient, 0.0f, 1.0f);
+	ImGui::SliderFloat("Specular strength", &specularStrength, 0.0f, 1.0f);
+	ImGui::SliderFloat("Shininess", &shininess, 1.0f, 256.0f);
 
 	ImGui::Separator();
 
@@ -1828,10 +1952,10 @@ void VulkanRenderer::drawImGui()
 		ImGui::Checkbox("Enabled##sky", &skyEnabled);
 		if (skyEnabled)
 		{
-			ImGui::ColorEdit3("Horizon",  &skyPush.horizonColor.x);
-			ImGui::ColorEdit3("Zenith",   &skyPush.zenithColor.x);
-			ImGui::ColorEdit3("Ground",   &skyPush.groundColor.x);
-			ImGui::ColorEdit3("Sun color",&skyPush.sunParams.x);
+			ImGui::ColorEdit3("Horizon", &skyPush.horizonColor.x);
+			ImGui::ColorEdit3("Zenith", &skyPush.zenithColor.x);
+			ImGui::ColorEdit3("Ground", &skyPush.groundColor.x);
+			ImGui::ColorEdit3("Sun color", &skyPush.sunParams.x);
 			// Sun size as degrees (more intuitive than cosine)
 			float sunDeg = glm::degrees(std::acos(skyPush.sunParams.w));
 			if (ImGui::SliderFloat("Sun size (deg)", &sunDeg, 0.1f, 10.0f))
@@ -1841,11 +1965,42 @@ void VulkanRenderer::drawImGui()
 
 	ImGui::Separator();
 
+	// Fog
+	if (ImGui::CollapsingHeader("Fog"))
+	{
+		ImGui::Checkbox("Enabled##fog", &fogEnabled);
+		if (fogEnabled)
+		{
+			// Density: how quickly fog builds up with distance.
+			// At density=0.02, objects ~50 units away are noticeably fogged.
+			ImGui::SliderFloat("Density", &fogDensity, 0.0f, 0.1f, "%.4f");
+			// Height falloff: how fast fog thins out above z=0.
+			// 0 = uniform fog at all altitudes. 0.5+ = fog stays near the ground.
+			ImGui::SliderFloat("Height falloff", &fogHeightFalloff, 0.0f, 2.0f, "%.2f");
+			// Max opacity: cap the fog factor so distant objects remain faintly visible.
+			ImGui::SliderFloat("Max opacity", &fogMaxOpacity, 0.0f, 1.0f, "%.2f");
+			ImGui::Checkbox("Sync color to sky horizon", &fogSyncSky);
+			if (!fogSyncSky)
+				ImGui::ColorEdit3("Fog color", &fogColor.x);
+			else
+			{
+				// Show the synced color but greyed out so the user can see what it is.
+				glm::vec3 c = fogColor;
+				ImGui::BeginDisabled();
+				ImGui::ColorEdit3("Fog color (synced)", &c.x);
+				ImGui::EndDisabled();
+			}
+		}
+	}
+
+	ImGui::Separator();
+
 	// Point lights
 	if (ImGui::CollapsingHeader("Point Lights"))
 	{
 		bool atMax = static_cast<int>(pointLights.size()) >= MAX_POINT_LIGHTS;
-		if (atMax) ImGui::BeginDisabled();
+		if (atMax)
+			ImGui::BeginDisabled();
 		if (ImGui::Button("Add Light"))
 			pointLights.push_back(PointLightData{});
 		if (atMax)
@@ -1864,11 +2019,11 @@ void VulkanRenderer::drawImGui()
 			snprintf(label, sizeof(label), "Light %d", i);
 			if (ImGui::TreeNode(label))
 			{
-				ImGui::Checkbox("Enabled",      &pl.enabled);
-				ImGui::DragFloat3("Position",   &pl.position.x,  0.05f);
-				ImGui::ColorEdit3("Color",      &pl.color.x);
-				ImGui::SliderFloat("Intensity", &pl.intensity,   0.0f, 20.0f);
-				ImGui::SliderFloat("Radius",    &pl.radius,      0.5f, 50.0f);
+				ImGui::Checkbox("Enabled", &pl.enabled);
+				ImGui::DragFloat3("Position", &pl.position.x, 0.05f);
+				ImGui::ColorEdit3("Color", &pl.color.x);
+				ImGui::SliderFloat("Intensity", &pl.intensity, 0.0f, 20.0f);
+				ImGui::SliderFloat("Radius", &pl.radius, 0.5f, 50.0f);
 				if (ImGui::Button("Remove"))
 					removeIdx = i;
 				ImGui::TreePop();
@@ -1893,9 +2048,9 @@ void VulkanRenderer::drawImGui()
 			{
 				bool changed = false;
 				// DragFloat lets the user drag to adjust or ctrl+click to type a value.
-				changed |= ImGui::DragFloat3("Position",   &r.position.x,    0.05f);
-				changed |= ImGui::DragFloat3("Rotation",   &r.rotationDeg.x, 1.0f, -180.0f, 180.0f);
-				changed |= ImGui::DragFloat ("Scale",      &r.scale,         0.01f,   0.01f, 100.0f);
+				changed |= ImGui::DragFloat3("Position", &r.position.x, 0.05f);
+				changed |= ImGui::DragFloat3("Rotation", &r.rotationDeg.x, 1.0f, -180.0f, 180.0f);
+				changed |= ImGui::DragFloat("Scale", &r.scale, 0.01f, 0.01f, 100.0f);
 				if (changed)
 					r.modelMatrix = buildModelMatrix(r.position, r.rotationDeg, r.scale);
 				ImGui::TreePop();
