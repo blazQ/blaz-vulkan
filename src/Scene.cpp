@@ -143,15 +143,15 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color,
     return {verts, idxs};
 }
 
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::string &path, bool yUpToZUp)
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::filesystem::path &path, bool yUpToZUp)
 {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
     std::string warn, err;
 
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.c_str()))
-        throw std::runtime_error("loadOBJ failed for '" + path + "': " + warn + err);
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, path.string().c_str()))
+        throw std::runtime_error("failed to load OBJ '" + path.string() + "': " + warn + err);
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -277,7 +277,7 @@ static glm::mat4 nodeTransform(const fastgltf::Node &node)
 static void visitNode(const fastgltf::Asset &asset,
                       size_t nodeIndex,
                       const glm::mat4 &parentTransform,
-                      const std::string &baseDir,
+                      const std::filesystem::path &baseDir,
                       std::vector<GltfPrimitive> &out, bool yUpToZUp)
 {
     const fastgltf::Node &node = asset.nodes[nodeIndex];
@@ -296,7 +296,7 @@ static void visitNode(const fastgltf::Asset &asset,
             // Every primitive must have POSITION. Fail hard if missing.
             auto posIt = prim.findAttribute("POSITION");
             if (posIt == prim.attributes.end())
-                throw std::runtime_error("glTF primitive missing POSITION");
+                throw std::runtime_error("failed to parse glTF: primitive missing POSITION");
 
             const fastgltf::Accessor &posAcc = asset.accessors[posIt->accessorIndex];
             result.vertices.resize(posAcc.count);
@@ -367,7 +367,7 @@ static void visitNode(const fastgltf::Asset &asset,
                     const fastgltf::Image &img = asset.images[tex.imageIndex.value()];
 
                     if (const auto *uri = std::get_if<fastgltf::sources::URI>(&img.data))
-                        return {baseDir + "/" + std::string(uri->uri.path()), {}};
+                        return {(baseDir / uri->uri.path()).string(), {}};
 
                     if (const auto *arr = std::get_if<fastgltf::sources::Array>(&img.data))
                         return {{}, std::vector<uint8_t>(
@@ -408,21 +408,18 @@ static void visitNode(const fastgltf::Asset &asset,
         visitNode(asset, childIndex, worldTransform, baseDir, out, yUpToZUp);
 }
 
-std::vector<GltfPrimitive> loadGLTF(const std::string &path, bool yUpToZUp)
+std::vector<GltfPrimitive> loadGLTF(const std::filesystem::path &path, bool yUpToZUp)
 {
-    // The base directory is used to resolve relative texture URIs.
-    std::string baseDir = std::filesystem::path(path).parent_path().string();
-
     auto dataResult = fastgltf::GltfDataBuffer::FromPath(path);
     if (dataResult.error() != fastgltf::Error::None)
-        throw std::runtime_error("loadGLTF: could not read file '" + path + "'");
+        throw std::runtime_error("failed to read glTF file '" + path.string() + "'");
 
     fastgltf::Parser parser;
     auto assetResult = parser.loadGltf(dataResult.get(),
-                                       std::filesystem::path(path).parent_path(),
+                                       path.parent_path(),
                                        fastgltf::Options::LoadExternalImages | fastgltf::Options::LoadExternalBuffers);
     if (assetResult.error() != fastgltf::Error::None)
-        throw std::runtime_error("loadGLTF: parse failed for '" + path + "': " + std::string(fastgltf::getErrorMessage(assetResult.error())));
+        throw std::runtime_error("failed to parse glTF '" + path.string() + "': " + std::string(fastgltf::getErrorMessage(assetResult.error())));
 
     const fastgltf::Asset &asset = assetResult.get();
 
@@ -445,7 +442,7 @@ std::vector<GltfPrimitive> loadGLTF(const std::string &path, bool yUpToZUp)
 
     // Walk every root node; visitNode recurses into children.
     for (size_t rootNode : scene.nodeIndices)
-        visitNode(asset, rootNode, rootTransform, baseDir, primitives, yUpToZUp);
+        visitNode(asset, rootNode, rootTransform, path.parent_path(), primitives, yUpToZUp);
 
     return primitives;
 }

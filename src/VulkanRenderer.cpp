@@ -39,6 +39,7 @@ std::array<vk::VertexInputAttributeDescription, 5> VulkanRenderer::getVertexAttr
 
 void VulkanRenderer::run()
 {
+	basePath_ = std::filesystem::path(ASSET_DIR);
 	initWindow();
 	initVulkan();
 	imGuiInit();
@@ -463,9 +464,9 @@ void VulkanRenderer::createSkyDescriptorSets()
 
 // ─── Utility helpers ───────────────────────────────────────────────────────
 
-std::vector<char> VulkanRenderer::readFile(const std::string &filename)
+std::vector<char> VulkanRenderer::readFile(const std::filesystem::path &path)
 {
-	std::ifstream file(filename, std::ios::ate | std::ios::binary);
+	std::ifstream file(basePath_ / path, std::ios::ate | std::ios::binary);
 
 	if (!file.is_open())
 	{
@@ -720,7 +721,7 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 	}
 	else
 	{
-		throw std::invalid_argument("unsupported layout transition!");
+		throw std::runtime_error("unsupported layout transition!");
 	}
 
 	vk::ImageMemoryBarrier2 barrier{
@@ -746,20 +747,20 @@ void VulkanRenderer::transitionImageLayout(const vk::raii::Image &image,
 // Loads a texture from disk, uploads it to the GPU, creates a view and sampler,
 // appends it to the global textures array, and returns its index. Returns the
 // cached index immediately if the same path was already loaded.
-uint32_t VulkanRenderer::loadTexture(const std::string &path, bool linearFormat)
+uint32_t VulkanRenderer::loadTexture(const std::filesystem::path &path, bool linearFormat)
 {
 	if (textures.size() >= MAX_TEXTURES)
 		throw std::runtime_error("texture limit reached");
 
-	auto it = textureCache.find(path);
+	auto it = textureCache.find(path.string());
 	if (it != textureCache.end())
 		return it->second;
 
 	int texWidth, texHeight, texChannels;
-	stbi_uc *pixels = stbi_load(path.c_str(), &texWidth, &texHeight,
+	stbi_uc *pixels = stbi_load(path.string().c_str(), &texWidth, &texHeight,
 								&texChannels, STBI_rgb_alpha);
 	if (!pixels)
-		throw std::runtime_error("failed to load texture: " + path);
+		throw std::runtime_error("failed to load texture: " + path.string());
 
 	uint32_t mipLevels = static_cast<uint32_t>(
 							 std::floor(std::log2(std::max(texWidth, texHeight)))) +
@@ -814,7 +815,7 @@ uint32_t VulkanRenderer::loadTexture(const std::string &path, bool linearFormat)
 
 	uint32_t index = static_cast<uint32_t>(textures.size());
 	textures.push_back(std::move(tex));
-	textureCache[path] = index;
+	textureCache[path.string()] = index;
 	return index;
 }
 
@@ -829,7 +830,7 @@ uint32_t VulkanRenderer::loadTextureFromMemory(const std::vector<uint8_t> &bytes
 											&texWidth, &texHeight,
 											&texChannels, STBI_rgb_alpha);
 	if (!pixels)
-		throw std::runtime_error("loadTextureFromMemory: stbi decode failed");
+		throw std::runtime_error("failed to decode texture from memory");
 
 	uint32_t mipLevels = static_cast<uint32_t>(
 							 std::floor(std::log2(std::max(texWidth, texHeight)))) +
@@ -1033,9 +1034,10 @@ static glm::mat4 buildModelMatrix(glm::vec3 pos, glm::vec3 rotDeg, float scale)
 
 void VulkanRenderer::loadScene()
 {
-	std::ifstream f(SCENE_PATH);
+	auto scenePath = basePath_ / SCENE_PATH;
+	std::ifstream f(scenePath);
 	if (!f.is_open())
-		throw std::runtime_error("failed to open scene file: " + SCENE_PATH);
+		throw std::runtime_error("failed to open scene file: " + scenePath.string());
 
 	nlohmann::json scene = nlohmann::json::parse(f);
 
@@ -1071,6 +1073,9 @@ void VulkanRenderer::loadScene()
 			pointLights.push_back(d);
 		}
 	}
+
+	// Resolve a path from the scene JSON against the executable directory.
+	auto assetPath = [&](const std::string &rel) { return basePath_ / rel; };
 
 	for (const auto &obj : scene["objects"])
 	{
@@ -1120,7 +1125,7 @@ void VulkanRenderer::loadScene()
 				// They carry their own transforms from the node tree, so we apply
 				// the scene.json position/rotation/scale on top as a parent transform.
 				glm::mat4 parentTransform = buildModelMatrix(pos, rotDeg, scale);
-				for (auto &prim : loadGLTF(mesh, yUpToZUp))
+				for (auto &prim : loadGLTF(assetPath(mesh), yUpToZUp))
 				{
 					auto resolveSlot = [&](const GltfImage &img, bool linear) -> uint32_t {
 						if (!img.path.empty())  return loadTexture(img.path, linear);
@@ -1145,7 +1150,7 @@ void VulkanRenderer::loadScene()
 			}
 			else
 			{
-				meshData = loadOBJ(mesh, yUpToZUp);
+				meshData = loadOBJ(assetPath(mesh), yUpToZUp);
 			}
 		}
 
@@ -1155,14 +1160,14 @@ void VulkanRenderer::loadScene()
 		r.rotationDeg = rotDeg;
 		r.scale = scale;
 		r.modelMatrix = buildModelMatrix(pos, rotDeg, scale);
-		r.textureIndex = texturePath ? loadTexture(*texturePath) : 0xFFFFu;
-		r.specularMapIndex = specularMapPath ? loadTexture(*specularMapPath) : 0xFFFFu;
-		r.normalMapIndex = normalMapPath ? loadTexture(*normalMapPath) : 0xFFFFu;
-		r.heightMapIndex = heightMapPath ? loadTexture(*heightMapPath) : 0xFFFFu;
+		r.textureIndex     = texturePath     ? loadTexture(assetPath(*texturePath))     : 0xFFFFu;
+		r.specularMapIndex = specularMapPath ? loadTexture(assetPath(*specularMapPath)) : 0xFFFFu;
+		r.normalMapIndex   = normalMapPath   ? loadTexture(assetPath(*normalMapPath))   : 0xFFFFu;
+		r.heightMapIndex   = heightMapPath   ? loadTexture(assetPath(*heightMapPath))   : 0xFFFFu;
 		uploadRenderable(r, meshData.first, meshData.second);
 		renderables.push_back(std::move(r));
 	}
-	printf("Loaded %zu unique textures\n", textures.size());
+	std::cout << "Loaded " << textures.size() << " unique textures\n";
 }
 
 // Host-visible, persistently mapped — CPU writes UBO data each frame via the
@@ -1371,7 +1376,6 @@ void VulkanRenderer::drawFrame()
 	else if (result != vk::Result::eSuccess &&
 			 result != vk::Result::eSuboptimalKHR)
 	{
-		assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 		throw std::runtime_error("failed to acquire swap chain image!");
 	}
 
@@ -2022,9 +2026,8 @@ void VulkanRenderer::drawImGui()
 		{
 			auto &pl = pointLights[i];
 			ImGui::PushID(i);
-			char label[32];
-			snprintf(label, sizeof(label), "Light %d", i);
-			if (ImGui::TreeNode(label))
+			std::string label = "Light " + std::to_string(i);
+			if (ImGui::TreeNode(label.c_str()))
 			{
 				ImGui::Checkbox("Enabled", &pl.enabled);
 				ImGui::DragFloat3("Position", &pl.position.x, 0.05f);

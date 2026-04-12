@@ -118,7 +118,10 @@ set_target_properties(main PROPERTIES
 target_link_libraries(main PRIVATE Vulkan::cppm glfw fastgltf)
 target_include_directories(main PRIVATE ${STB_INCLUDEDIR} ${TINYOBJ_INCLUDEDIR} ${IMGUI_DIR} ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/extern/nlohmann-json/include)
-target_compile_definitions(main PRIVATE VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS)
+target_compile_definitions(main PRIVATE
+    VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
+    ASSET_DIR="${CMAKE_BINARY_DIR}"
+)
 add_dependencies(main shaders)
 
 if(ENABLE_CPP20_MODULE)

@@ -41,7 +41,7 @@ void Device::createInstance()
               { return strcmp(layerProperty.layerName, requiredLayer) == 0; }); });
     if (unsupportedLayerIt != validationLayers.end())
     {
-        throw std::runtime_error("Required layer not supported: " +
+        throw std::runtime_error("failed to create instance: unsupported layer: " +
                                  std::string(*unsupportedLayerIt));
     }
 
@@ -65,7 +65,7 @@ void Device::createInstance()
         });
     if (unsupportedPropertyIt != requiredExtensions.end())
     {
-        throw std::runtime_error("Required extension not supported: " +
+        throw std::runtime_error("failed to create instance: unsupported extension: " +
                                  std::string(*unsupportedPropertyIt));
     }
 
@@ -153,8 +153,7 @@ void Device::createLogicalDevice()
     }
     if (queueIndex == ~0)
     {
-        throw std::runtime_error(
-            "Could not find a queue for graphics and present -> terminating");
+        throw std::runtime_error("failed to find a graphics + present queue!");
     }
 
     graphicsIndex = queueIndex;

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -128,6 +129,11 @@ private:
     // -------------------------------------------------------------------------
     // Member variables
     // -------------------------------------------------------------------------
+
+    // Base path: directory containing the executable. Used to resolve all
+    // asset paths (shaders, scenes, textures) so the binary can be invoked
+    // from any working directory.
+    std::filesystem::path basePath_;
 
     // Window
     GLFWwindow *window = nullptr;
@@ -269,7 +275,7 @@ private:
     void createSkyDescriptorSetLayout();
     void createSkyPipeline();
     void createSkyDescriptorSets();
-    static std::vector<char> readFile(const std::string &filename);
+    std::vector<char> readFile(const std::filesystem::path &path);
     vk::raii::ShaderModule createShaderModule(const std::vector<char> &code);
     static bool hasStencilComponent(vk::Format format);
 
@@ -301,7 +307,7 @@ private:
                                vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 
     // Texture
-    uint32_t loadTexture(const std::string &path, bool linearFormat = false);
+    uint32_t loadTexture(const std::filesystem::path &path, bool linearFormat = false);
     uint32_t loadTextureFromMemory(const std::vector<uint8_t> &bytes, bool linearFormat = false);
     void generateMipmaps(vk::raii::Image &image, vk::Format imageFormat,
                          int32_t texWidth, int32_t texHeight, uint32_t mipLevels);

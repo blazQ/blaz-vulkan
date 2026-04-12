@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <utility>
@@ -66,5 +67,5 @@ std::pair<std::vector<Vertex>, std::vector<uint32_t>> makePlane(glm::vec3 color,
 std::pair<std::vector<Vertex>, std::vector<uint32_t>> makeSphere(glm::vec3 color, float radius,
                                                                    uint32_t sectors = 32,
                                                                    uint32_t stacks  = 16);
-std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::string &path, bool yUpToZUp = false);
-std::vector<GltfPrimitive> loadGLTF(const std::string& path, bool yUpToZUp = false);
+std::pair<std::vector<Vertex>, std::vector<uint32_t>> loadOBJ(const std::filesystem::path &path, bool yUpToZUp = false);
+std::vector<GltfPrimitive> loadGLTF(const std::filesystem::path &path, bool yUpToZUp = false);

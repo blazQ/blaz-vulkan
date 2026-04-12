@@ -1,17 +1,20 @@
 # Sparse notes on Vulkan and Computer Graphics
 
-This repository documents my process of studying the Vulkan API and my efforts in getting to know low level graphical APIs to eventually being able to create cool graphic projects or implement complex graphics workflows in my own projects.
-It also documents an effort to better understand low level concepts as a whole and to make my C++ up to speed with modern standards. 
-So watch how I fail and this repository gets forgotten in a month ;`)
+This repository documents my learning path in the field of Computer Graphics and a personal effort in improving my knowledge of C++, CMake, the Vulkan API and CG Rasterization techniques. The scope of this project is ever-evolving, based on the features I stumble upon my study.
+It is in no way a complete product nor it is well-desgined but more like a personal laboratory, a tour if you will, to explore features and design principles.
+My goal is to keep this repository well-maintained: trying to push for a commit a day keeps the doctor away and helps with remaining focused.
 
-After reaching the Compute Shaders chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), I've decided to diverge from the tutorial itself to implement classical CG effects, like Shadow Mapping, and to implement a GUI which can help me debug and change the state of my renderer, since most of the backbone of how a basic Vulkan application has been dealt with.
-I'm integrating this study with well known resources, like learn-opengl.com, for a reference implementation of most of the effects. After implementing a complete renderer with a couple of interesting effects, I'll proceed with the rest of the tutorial.
+So watch how I fail and this repository gets forgotten in a month ;`) (So far I've been able to keep it up, but I'm writing this to make myself accountable)
 
-My objective is to have a commit a day, and see where it goes. So far I've been able to exceed this during weekends, but I failed during intense weekdays at my daily job.
+Currently, after reaching the Compute Shaders chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), I've decided to diverge from the tutorial. Since the bulk of what makes a functioning Vulkan program was dealt with, my next goals were to create simple scenes with geometrical primitives, implementing effects like Shadow Mapping, Bump Mapping, Blinn-Phong lighting and a simple debug GUI through which move objects, lights, change properties and enable/disable/tweak various scene properties like skybox color, fog, shadow map bias and light positioning and color.
 
-I'll eventually clean up this readme, but, for the time being, relevant notes on the API itself will be in the [notes](./notes) folder.
+I'm integrating this study with well known resources, like learn-opengl.com, for a reference implementation of most of the effects. I'm also reading books like C++ Primer and Real Time Rendering 4th edition as I go, trying to make sense of some of the topics.
+
+For the time being, relevant notes on the API itself will be in the [notes](./notes) folder.
 
 ## Building
+
+> This project is being developed inside a Fedora container within Distrobox and is not being currently tested elsewhere.If you want to test it on other platforms and add some issues, you're welcome!
 
 ### Prerequisites
 
@@ -38,26 +41,38 @@ git submodule update --init
 
 ### Compile and run
 
+The repo ships a `CMakePresets.json` with three named configurations. The `run.sh` script is a thin wrapper that invokes the preset and then runs the binary:
+
 ```bash
 ./run.sh              # debug build (default, validation layers active)
 ./run.sh release      # release build (optimized, no validation)
 ./run.sh relwithdebinfo  # optimized + debug symbols + validation
 ```
 
-### What the run script does (step by step)
+You can also drive the build directly without the script:
 
 ```bash
-# 1. Configure: reads CMakeLists.txt, generates build files in _build/,
-#    copies textures/ and models/ into _build/
-cmake -S . -B _build -DCMAKE_BUILD_TYPE=<build-type>
+cmake --workflow --preset debug   # configure + build
+./_build/main                     # run
+```
 
-# 2. Build: compiles shaders (scene.slang, shadow.slang, sky.slang -> _build/shaders/*.spv),
-#    compiles ImGui sources and the C++ executable to _build/main
-cmake --build _build
+Or pick a preset from the CMake Tools status bar if you're using VSCode.
 
-# 3. Run from _build/ so that relative paths in the code
-#    ("shaders/slang.spv", "textures/texture.jpg") resolve correctly
-cd _build && ./main
+### What the build does
+
+```
+cmake --workflow --preset <name>
+  │
+  ├── Configure  (cmake -S . -B _build -DCMAKE_BUILD_TYPE=...)
+  │     Reads CMakeLists.txt, generates Makefiles in _build/,
+  │     copies assets/ (textures, models, scenes) into _build/.
+  │
+  └── Build  (cmake --build _build)
+        Compiles scene.slang, shadow.slang, sky.slang → _build/shaders/*.spv,
+        compiles ImGui sources and the C++ renderer → _build/main.
+
+The binary resolves all asset paths relative to its own directory (_build/)
+using /proc/self/exe, so it can be invoked from anywhere.
 ```
 
 
@@ -92,7 +107,7 @@ cd _build && ./main
 ### Scene
 
 - **JSON scene descriptor** — objects with mesh (`cube`, `plane`, `sphere`, or file path), position, rotation, scale, texture, specularMap, normalMap, heightMap, vertex color; skybox colors and point lights also declared in JSON
-- **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"; up to 512 slots
+- **Bindless texture array** — all textures in a single descriptor binding (`PARTIALLY_BOUND`), indexed via push constants; `0xFFFF` sentinel for "no texture"; up to 2048 slots
 - **Per-object transform editing** — position, rotation (XYZ Euler), uniform scale via ImGui drag sliders, model matrix rebuilt on change
 - **OBJ loading** — via tinyobjloader; tangent vectors computed per-triangle from UV deltas and accumulated + orthogonalised per vertex
 - **GLTF/GLB loading** — via fastgltf; reads all primitives with their per-mesh transforms; extracts baseColor, normalMap, and metallicRoughness textures; handles both external image files and embedded GLB buffers; optional Y-up to Z-up axis remap
@@ -108,13 +123,14 @@ cd _build && ./main
 - **Vulkan 1.2 features** — `descriptorIndexing`, `runtimeDescriptorArray`, `shaderSampledImageArrayNonUniformIndexing`, `scalarBlockLayout`
 - **Swapchain** and **Device** abstracted into their own classes
 - **Dear ImGui** integration with dynamic rendering backend
+- **CMakePresets** — `CMakePresets.json` encodes debug/release/relwithdebinfo configurations; `run.sh` is a thin wrapper around `cmake --workflow`; IDE preset selection works out of the box with VSCode CMake Tools
 
 ### Future developments
 
 The immediate goal is to consolidate and clean up what's here before adding more features. Current thoughts:
 
 - Replace Blinn-Phong with a physically-based BXDF (Cook-Torrance or similar), using the metallic-roughness maps already extracted by the GLTF loader
-- Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts
+- Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts (started: build system cleaned up with CMakePresets, asset path resolution made robust)
 - Revisit implemented techniques to fix edge cases (shadow map coverage for large scenes, POM artifacts at silhouettes) and understand them better
 
 ---
