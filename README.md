@@ -1,20 +1,20 @@
 # Sparse notes on Vulkan and Computer Graphics
 
 This repository documents my learning path in the field of Computer Graphics and a personal effort in improving my knowledge of C++, CMake, the Vulkan API and CG Rasterization techniques. The scope of this project is ever-evolving, based on the features I stumble upon my study.
+
 It is in no way a complete product nor it is well-desgined but more like a personal laboratory, a tour if you will, to explore features and design principles.
-My goal is to keep this repository well-maintained: trying to push for a commit a day keeps the doctor away and helps with remaining focused.
 
-So watch how I fail and this repository gets forgotten in a month ;`) (So far I've been able to keep it up, but I'm writing this to make myself accountable)
+My goal is to keep this repository well-maintained: trying to push for a commit a day keeps the doctor away and helps with remaining focused. So watch how I fail and this repository gets forgotten in a month ;`) (So far I've been able to keep it up, but I'm writing this to make myself accountable)
 
-Currently, after reaching the Compute Shaders chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), I've decided to diverge from the tutorial. Since the bulk of what makes a functioning Vulkan program was dealt with, my next goals were to create simple scenes with geometrical primitives, implementing effects like Shadow Mapping, Bump Mapping, Blinn-Phong lighting and a simple debug GUI through which move objects, lights, change properties and enable/disable/tweak various scene properties like skybox color, fog, shadow map bias and light positioning and color.
+Currently, after reaching the Compute Shaders chapter of the [Khronos Group's Vulkan Tutorial](https://docs.vulkan.org/tutorial/latest/00_Introduction.html), I've decided to diverge from the tutorial. Since the bulk of what makes a functioning Vulkan program was dealt with, my next goals were to create simple scenes with geometrical primitives, implementing effects like Shadow Mapping, Bump Mapping, Blinn-Phong lighting and a simple debug GUI to move objects, lights, change properties and enable/disable/tweak various scene properties like skybox color, fog, shadow map bias and light positioning and color.
 
 I'm integrating this study with well known resources, like learn-opengl.com, for a reference implementation of most of the effects. I'm also reading books like C++ Primer and Real Time Rendering 4th edition as I go, trying to make sense of some of the topics.
 
-For the time being, relevant notes on the API itself will be in the [notes](./notes) folder.
+The next steps, as of mid April 2026, are to write a comprehensive set of notes on the API itself in the notes folder to document the whole process. [notes](./notes) folder.
 
 ## Building
 
-> This project is being developed inside a Fedora container within Distrobox and is not being currently tested elsewhere.If you want to test it on other platforms and add some issues, you're welcome!
+> This project is being developed inside a distrobox Fedora container and is not being currently tested elsewhere. If you want to test it on other platforms and add some issues, you're welcome!
 
 ### Prerequisites
 
@@ -27,7 +27,7 @@ The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system l
 
 ### Clone
 
-This repository uses git submodules (Dear ImGui, fastgltf). Clone with:
+This repository uses git submodules (Due to Dear ImGui, fastgltf dependencies). Clone with:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -65,14 +65,13 @@ cmake --workflow --preset <name>
   │
   ├── Configure  (cmake -S . -B _build -DCMAKE_BUILD_TYPE=...)
   │     Reads CMakeLists.txt, generates Makefiles in _build/,
-  │     copies assets/ (textures, models, scenes) into _build/.
+  │     copies assets/ (textures, models, scenes) into _build/,
+  │     bakes ASSET_DIR=<absolute path to _build/> into the binary
+  │     so the executable can locate assets regardless of working directory.
   │
   └── Build  (cmake --build _build)
         Compiles scene.slang, shadow.slang, sky.slang → _build/shaders/*.spv,
         compiles ImGui sources and the C++ renderer → _build/main.
-
-The binary resolves all asset paths relative to its own directory (_build/)
-using /proc/self/exe, so it can be invoked from anywhere.
 ```
 
 
@@ -130,7 +129,7 @@ using /proc/self/exe, so it can be invoked from anywhere.
 The immediate goal is to consolidate and clean up what's here before adding more features. Current thoughts:
 
 - Replace Blinn-Phong with a physically-based BXDF (Cook-Torrance or similar), using the metallic-roughness maps already extracted by the GLTF loader
-- Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts (started: build system cleaned up with CMakePresets, asset path resolution made robust)
+- Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts
 - Revisit implemented techniques to fix edge cases (shadow map coverage for large scenes, POM artifacts at silhouettes) and understand them better
 
 ---
