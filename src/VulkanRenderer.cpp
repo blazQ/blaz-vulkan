@@ -1141,7 +1141,7 @@ void VulkanRenderer::loadScene()
 					r.modelMatrix  = parentTransform * prim.transform;
 					r.textureIndex   = resolveSlot(prim.baseColor, false); // sRGB
 					r.normalMapIndex = resolveSlot(prim.normalMap,  true);  // linear
-					r.specularMapIndex    = 0xFFFFu; // metallic-roughness unused until PBR shading
+					r.metallicRoughnessIndex = resolveSlot(prim.metallicRoughness, true); // linear
 					r.heightMapIndex      = 0xFFFFu;
 					uploadRenderable(r, prim.vertices, prim.indices);
 					renderables.push_back(std::move(r));
@@ -1161,7 +1161,7 @@ void VulkanRenderer::loadScene()
 		r.scale = scale;
 		r.modelMatrix = buildModelMatrix(pos, rotDeg, scale);
 		r.textureIndex     = texturePath     ? loadTexture(assetPath(*texturePath))     : 0xFFFFu;
-		r.specularMapIndex = specularMapPath ? loadTexture(assetPath(*specularMapPath)) : 0xFFFFu;
+		r.metallicRoughnessIndex = specularMapPath ? loadTexture(assetPath(*specularMapPath)) : 0xFFFFu;
 		r.normalMapIndex   = normalMapPath   ? loadTexture(assetPath(*normalMapPath))   : 0xFFFFu;
 		r.heightMapIndex   = heightMapPath   ? loadTexture(assetPath(*heightMapPath))   : 0xFFFFu;
 		uploadRenderable(r, meshData.first, meshData.second);
@@ -1466,14 +1466,55 @@ void VulkanRenderer::updateUniformBuffer(uint32_t currentImage)
 		glm::cos(lightAngle) * 8.0f,
 		glm::sin(lightAngle) * 8.0f,
 		6.0f);
-	glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	glm::mat4 lightProj = glm::ortho(-shadowOrthoSize, shadowOrthoSize,
-	                                  -shadowOrthoSize, shadowOrthoSize,
-	                                  shadowNear, shadowFar);
+	// Camera-fitted shadow projection.
+	// Unproject the camera's NDC cube corners back to world space using a
+	// projection capped at shadowFar, then fit the light's ortho frustum tightly
+	// around those corners. Shadow map resolution is always spent on what's visible.
+	float aspect = static_cast<float>(swapchain->getExtent().width) /
+	               static_cast<float>(swapchain->getExtent().height);
+	glm::mat4 camProj = glm::perspective(glm::radians(75.0f), aspect, 0.5f, shadowFar);
+	camProj[1][1] *= -1; // Vulkan Y-flip
+	glm::mat4 invCamVP = glm::inverse(camProj * camera.getViewMatrix());
+
+	std::array<glm::vec3, 8> corners;
+	int ci = 0;
+	for (float x : {-1.0f, 1.0f})
+		for (float y : {-1.0f, 1.0f})
+			for (float z : {0.0f, 1.0f}) { // [0,1] depth range (Vulkan)
+				glm::vec4 pt = invCamVP * glm::vec4(x, y, z, 1.0f);
+				corners[ci++] = glm::vec3(pt) / pt.w;
+			}
+
+	glm::vec3 frustumCenter{};
+	for (auto& c : corners) frustumCenter += c;
+	frustumCenter /= 8.0f;
+
+	glm::vec3 lightDir = glm::normalize(lightPos);
+	glm::mat4 lightView = glm::lookAt(
+		frustumCenter + lightDir * shadowFar,   // light is in +lightDir from scene
+		frustumCenter,
+		glm::vec3(0.0f, 0.0f, 1.0f));
+
+	float minX =  std::numeric_limits<float>::max(), maxX = std::numeric_limits<float>::lowest();
+	float minY =  std::numeric_limits<float>::max(), maxY = std::numeric_limits<float>::lowest();
+	float minZ =  std::numeric_limits<float>::max(), maxZ = std::numeric_limits<float>::lowest();
+	for (auto& c : corners) {
+		glm::vec4 lc = lightView * glm::vec4(c, 1.0f);
+		minX = std::min(minX, lc.x); maxX = std::max(maxX, lc.x);
+		minY = std::min(minY, lc.y); maxY = std::max(maxY, lc.y);
+		minZ = std::min(minZ, lc.z); maxZ = std::max(maxZ, lc.z);
+	}
+
+	// Convert light-space Z (negative = in front of camera) to clip distances.
+	// Extend the far plane to catch shadow casters behind the visible frustum
+	// (e.g. a roof above the camera that still casts shadows on the floor).
+	float nearClip = std::max(0.01f, -maxZ);
+	float farClip  = -minZ + (-minZ - (-maxZ)) * 0.5f;
+	glm::mat4 lightProj = glm::ortho(minX, maxX, minY, maxY, nearClip, farClip);
 	ubo.lightSpaceMatrix = lightProj * lightView;
 	ubo.lightDir = glm::vec4(glm::normalize(lightPos), 0.0f);
 	ubo.cameraPos = glm::vec4(camera.position, 0.0f);
-	ubo.materialParams = glm::vec4(ambient, specularStrength, shininess, tonemapping ? exposure : 0.0f);
+	ubo.materialParams = glm::vec4(ambient, defaultRoughness, defaultMetallic, tonemapping ? exposure : 0.0f);
 
 	int activeLights = 0;
 	for (const auto &pl : pointLights)
@@ -1542,7 +1583,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 		*descriptorSets[frameIndex], nullptr);
 	for (const auto &r : renderables)
 	{
-		PushConstants pc{r.modelMatrix, r.textureIndex, r.specularMapIndex, r.normalMapIndex, r.heightMapIndex};
+		PushConstants pc{r.modelMatrix, r.textureIndex, r.metallicRoughnessIndex, r.normalMapIndex, r.heightMapIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
@@ -1661,7 +1702,7 @@ void VulkanRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 	for (const auto &r : renderables)
 	{
-		PushConstants pc{r.modelMatrix, r.textureIndex, r.specularMapIndex, r.normalMapIndex, r.heightMapIndex};
+		PushConstants pc{r.modelMatrix, r.textureIndex, r.metallicRoughnessIndex, r.normalMapIndex, r.heightMapIndex};
 		commandBuffer.pushConstants2(
 			vk::PushConstantsInfo{}
 				.setLayout(*pipelineLayout)
@@ -1922,11 +1963,9 @@ void VulkanRenderer::drawImGui()
 	// Shadow bias sliders.
 	// biasMin = bias when face is lit head-on (low acne risk, low peter-pan risk).
 	// biasMax = bias at grazing angles (high acne risk without it, peter-pan if too high).
-	ImGui::SliderFloat("Shadow bias min",  &shadowBiasMin,   0.0f,  0.01f,  "%.4f");
-	ImGui::SliderFloat("Shadow bias max",  &shadowBiasMax,   0.0f,  0.02f,  "%.4f");
-	ImGui::SliderFloat("Ortho size",       &shadowOrthoSize, 1.0f,  200.0f, "%.1f");
-	ImGui::SliderFloat("Shadow near",      &shadowNear,      0.01f, 10.0f,  "%.2f");
-	ImGui::SliderFloat("Shadow far",       &shadowFar,       10.0f, 500.0f, "%.1f");
+	ImGui::SliderFloat("Shadow bias min",  &shadowBiasMin, 0.0f,  0.01f,  "%.4f");
+	ImGui::SliderFloat("Shadow bias max",  &shadowBiasMax, 0.0f,  0.02f,  "%.4f");
+	ImGui::SliderFloat("Shadow distance",  &shadowFar,     5.0f,  200.0f, "%.1f");
 
 	ImGui::Separator();
 
@@ -1952,8 +1991,8 @@ void VulkanRenderer::drawImGui()
 	if (tonemapping)
 		ImGui::SliderFloat("Exposure", &exposure, 0.1f, 10.0f);
 	ImGui::SliderFloat("Ambient", &ambient, 0.0f, 1.0f);
-	ImGui::SliderFloat("Specular strength", &specularStrength, 0.0f, 1.0f);
-	ImGui::SliderFloat("Shininess", &shininess, 1.0f, 256.0f);
+	ImGui::SliderFloat("Default Roughness", &defaultRoughness, 0.0f, 1.0f);
+	ImGui::SliderFloat("Default Metallic",  &defaultMetallic,  0.0f, 1.0f);
 
 	ImGui::Separator();
 

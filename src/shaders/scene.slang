@@ -12,7 +12,7 @@ struct UniformBuffer {
     float4x4 lightSpaceMatrix;
     float4 lightDir;
     float4 cameraPos;
-    float4 materialParams;      // x=ambient, y=specStrength, z=shininess, w=exposure
+    float4 materialParams;      // x=ambient, y=defaultRoughness, z=defaultMetallic, w=exposure
     float4 pointLightPos[4];    // xyz=world position, w=intensity
     float4 pointLightColor[4];  // xyz=color, w=radius
     float4 lightCounts;         // x=number of active point lights
@@ -40,9 +40,9 @@ ConstantBuffer<UniformBuffer> ubo;
 struct PushConstants {
     float4x4 model;
     uint32_t textureIndex;
-    uint32_t specularMapIndex; // 0xFFFF = no specular map
-    uint32_t normalMapIndex;   // 0xFFFF = use geometric normal
-    uint32_t heightMapIndex;   // 0xFFFF = no POM
+    uint32_t metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
+    uint32_t normalMapIndex;         // 0xFFFF = use geometric normal
+    uint32_t heightMapIndex;         // 0xFFFF = no POM
 };
 [[vk::push_constant]] PushConstants push;
 
@@ -147,10 +147,91 @@ VSOutput vertMain(VSInput input) {
 [[vk::binding(1, 0)]] Sampler2D textures[];
 [[vk::binding(2, 0)]] Sampler2DShadow shadowMap;
 
+// ── PBR: Cook-Torrance BRDF ───────────────────────────────────────────────────
+//
+// Physically-based reflectance model.
+// f(l,v) = f_diffuse + f_specular
+//   f_diffuse  = albedo / π                                (Lambertian)
+//   f_specular = (D · G · F) / (4 · NdotL · NdotV)       (Cook-Torrance)
+//
+// D — GGX/Trowbridge-Reitz normal distribution.
+//     Models the fraction of microfacets aligned to the halfway vector H.
+//     α = roughness² — squaring gives a more perceptually linear response.
+float D_GGX(float NdotH, float alpha)
+{
+    float a2 = alpha * alpha;
+    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom);
+}
+
+// G — Smith's combined geometry/shadowing-masking term via Schlick-GGX.
+//     Accounts for microfacets blocking each other from the light and viewer.
+//     k = (roughness+1)² / 8  (remapping for direct lighting; IBL uses a different k).
+float G_SchlickGGX(float NdotX, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+
+float G_Smith(float NdotV, float NdotL, float roughness)
+{
+    return G_SchlickGGX(max(NdotV, 0.001), roughness)
+         * G_SchlickGGX(max(NdotL, 0.001), roughness);
+}
+
+// F — Fresnel-Schlick approximation.
+//     Models how much light is reflected vs refracted depending on the view angle.
+//     F0 is the base reflectance at normal incidence:
+//       dielectrics ≈ 0.04  (non-metallic, e.g. plastic, stone)
+//       conductors  = albedo (metals absorb the refracted portion)
+float3 F_Schlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Evaluate the full Cook-Torrance BRDF for one light source and accumulate
+// into the outgoing radiance.
+//
+// N        — shading normal (world space, unit)
+// V        — view direction (surface → camera, unit)
+// L        — light direction (surface → light, unit)
+// albedo   — base color (linear)
+// metallic — 0 = dielectric, 1 = conductor
+// roughness— perceptual roughness [0,1]
+// F0       — base reflectance at normal incidence (pre-computed from albedo + metallic)
+// radiance — incoming light colour × intensity
+float3 PBR(float3 N, float3 V, float3 L,
+           float3 albedo, float metallic, float roughness,
+           float3 F0, float3 radiance)
+{
+    float3 H     = normalize(V + L);
+    float NdotL  = max(dot(N, L), 0.0);
+    float NdotV  = dot(N, V);
+    float NdotH  = max(dot(N, H), 0.0);
+    float VdotH  = max(dot(V, H), 0.0);
+
+    if (NdotL <= 0.0 || NdotV <= 0.0) return float3(0.0);
+
+    float  D = D_GGX(NdotH, roughness * roughness);
+    float  G = G_Smith(NdotV, NdotL, roughness);
+    float3 F = F_Schlick(VdotH, F0);
+
+    // Specular lobe
+    float3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
+
+    // Diffuse lobe: energy conservation — only the non-reflected (1-F) fraction
+    // scatters as diffuse, and metals have no diffuse contribution.
+    float3 kD = (float3(1.0) - F) * (1.0 - metallic);
+    float3 diffuse = kD * albedo / 3.14159265;
+
+    return (diffuse + specular) * radiance * NdotL;
+}
+
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn) : SV_TARGET {
     // --- Parallax Occlusion Mapping ---
-    // Displace the UV before any texture sampling so all maps (albedo, normal, specular)
+    // Displace the UV before any texture sampling so all maps (albedo, normal, metallic)
     // show the same displaced surface. Only applied when a height map is bound.
     float2 uv = vertIn.fragTexCoord;
     if (push.heightMapIndex != 0xFFFFu)
@@ -169,19 +250,16 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
                             ubo.pomParams.z); // maxSteps
     }
 
+    // --- Shadow ---
     float3 projCoords = vertIn.fragPosLightSpace.xyz / vertIn.fragPosLightSpace.w;
     float2 shadowUV = projCoords.xy * 0.5 + 0.5;
     float currentDepth = projCoords.z;
 
-    // Fragments outside the light frustum (XY bounds or behind far plane) are fully lit.
-    // The sampler uses ClampToBorder + white, so out-of-bounds PCF taps already return
-    // 1.0, but the explicit check avoids sampling entirely for clearly out-of-bounds fragments.
-    // Slope-scale bias: surfaces nearly parallel to the light (low NdotL) need a
-    // larger bias to avoid shadow acne. We use the geometric normal (not the
-    // normal-mapped one) because the shadow map was rendered from raw geometry.
-    // biasMin/biasMax are tuned at runtime via ImGui (ubo.shadowParams.xy).
-    float NdotL_geo  = max(dot(normalize(vertIn.fragNormal), normalize(ubo.lightDir.xyz)), 0.0);
-    float shadowBias = lerp(ubo.shadowParams.x, ubo.shadowParams.y, NdotL_geo);
+    // Slope-scale bias: surfaces nearly parallel to the light need more bias to
+    // avoid shadow acne. Uses the geometric normal (not normal-mapped) because
+    // the shadow map was rendered from raw geometry.
+    float NdotL_geo   = max(dot(normalize(vertIn.fragNormal), normalize(ubo.lightDir.xyz)), 0.0);
+    float shadowBias  = lerp(ubo.shadowParams.x, ubo.shadowParams.y, NdotL_geo);
     float biasedDepth = currentDepth - shadowBias;
 
     float shadow = 1.0;
@@ -199,13 +277,8 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
         shadow /= 9.0;
     }
 
-    float ambient         = ubo.materialParams.x;
-    float specStrength    = ubo.materialParams.y;
-    float shininess       = ubo.materialParams.z;
-
-    // Normal: sample the normal map if present, otherwise use the geometric normal.
-    // Normal maps store directions in tangent space encoded as RGB in [0,1].
-    // We remap to [-1,1] then rotate into world space using the TBN matrix.
+    // --- Normal ---
+    // Sample the normal map if present, otherwise use the geometric normal.
     float3 norm;
     if (push.normalMapIndex == 0xFFFFu)
     {
@@ -215,37 +288,46 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     {
         float3 sampledNormal = textures[NonUniformResourceIndex(push.normalMapIndex)].Sample(uv).rgb;
         sampledNormal = sampledNormal * 2.0 - 1.0; // [0,1] → [-1,1]
-        // TBN columns: T, B, N. Multiplying transforms from tangent space to world space.
         float3x3 TBN = float3x3(vertIn.fragTangent, vertIn.fragBitangent, vertIn.fragNormal);
         norm = normalize(mul(transpose(TBN), sampledNormal));
     }
 
-    float3 toLight  = normalize(ubo.lightDir.xyz);
-    float3 viewDir  = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
-    float3 reflDir  = reflect(-toLight, norm);
+    // --- Material ---
+    float3 albedo = (push.textureIndex == 0xFFFFu)
+                  ? float3(1.0, 1.0, 1.0)
+                  : textures[NonUniformResourceIndex(push.textureIndex)].Sample(uv).rgb;
+    albedo *= vertIn.fragColor;
 
-    float diffuse = max(dot(norm, toLight), 0.0);
+    // Metallic-roughness map (glTF convention: G=roughness, B=metallic, linear space).
+    // Falls back to the per-scene defaults set via ImGui when no map is bound.
+    float roughness = ubo.materialParams.y;
+    float metallic  = ubo.materialParams.z;
+    if (push.metallicRoughnessIndex != 0xFFFFu)
+    {
+        float3 mrSample = textures[NonUniformResourceIndex(push.metallicRoughnessIndex)].Sample(uv).rgb;
+        roughness = mrSample.g;
+        metallic  = mrSample.b;
+    }
 
-    // Specular map: each texel stores how shiny that point on the surface is.
-    // rgb allows tinted specular highlights (e.g. gold reflects warm light).
-    // Falls back to the global specStrength slider when no map is assigned.
-    float3 specMapColor = (push.specularMapIndex == 0xFFFFu)
-        ? float3(specStrength, specStrength, specStrength)
-        : textures[NonUniformResourceIndex(push.specularMapIndex)].Sample(uv).rgb;
+    // F0: base reflectance at normal incidence.
+    // Dielectrics use 0.04 (a good approximation for most non-metals).
+    // Conductors (metallic=1) use the albedo as their F0.
+    float3 F0 = lerp(float3(0.04), albedo, metallic);
 
-    float  specFactor = (diffuse > 0.0) ? pow(max(dot(viewDir, reflDir), 0.0), shininess) : 0.0;
-    float3 specular   = specFactor * specMapColor;
+    float3 V = normalize(ubo.cameraPos.xyz - vertIn.fragWorldPos);
 
-    float exposure   = ubo.materialParams.w;
+    // --- Lighting ---
+    float ambient = ubo.materialParams.x;
 
-    float3 texColor = (push.textureIndex == 0xFFFFu)
-                    ? float3(1.0, 1.0, 1.0)
-                    : textures[NonUniformResourceIndex(push.textureIndex)].Sample(uv).rgb;
-    float3 baseColor = vertIn.fragColor * texColor;
-    float3 color = baseColor * (ambient + (1.0 - ambient) * diffuse * shadow)
-                 + specular * shadow;
+    // Ambient term: simplified (no IBL). Scale by (1 - metallic) for diffuse contribution,
+    // add a small specular ambient for metals so they don't go completely black.
+    float3 color = ambient * (albedo * (1.0 - metallic) + F0 * metallic);
 
-    // Point lights: no shadow casting, quadratic falloff within radius.
+    // Directional light
+    float3 L = normalize(ubo.lightDir.xyz);
+    color += shadow * PBR(norm, V, L, albedo, metallic, roughness, F0, float3(1.0));
+
+    // Point lights
     int numPointLights = (int)ubo.lightCounts.x;
     for (int i = 0; i < numPointLights; i++)
     {
@@ -254,37 +336,29 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
         float3 plColor     = ubo.pointLightColor[i].xyz;
         float  plRadius    = ubo.pointLightColor[i].w;
 
-        float3 toLight3D = plPos - vertIn.fragWorldPos;
-        float  dist      = length(toLight3D);
-        float3 plDir     = toLight3D / dist;
+        float3 toLight = plPos - vertIn.fragWorldPos;
+        float  dist    = length(toLight);
+        float3 L_pl    = toLight / dist;
 
-        // Smooth quadratic falloff: full intensity at dist=0, zero at dist=radius.
         float t   = clamp(dist / plRadius, 0.0, 1.0);
         float att = (1.0 - t * t) * (1.0 - t * t) * plIntensity;
 
-        float plDiffuse  = max(dot(norm, plDir), 0.0);
-        float3 plReflDir = reflect(-plDir, norm);
-        float  plSpec    = (plDiffuse > 0.0)
-                         ? pow(max(dot(viewDir, plReflDir), 0.0), shininess)
-                         : 0.0;
-
-        color += att * plColor * (baseColor * plDiffuse + specMapColor * plSpec);
+        color += att * PBR(norm, V, L_pl, albedo, metallic, roughness, F0, plColor);
     }
 
     // --- Fog ---
     // Applied in linear HDR space before tonemapping so the fog color goes through
-    // the same ACES curve as the scene — avoids a mismatched gamma/tone response.
+    // the same ACES curve as the scene.
     //
-    // Exponential height fog: fog is denser near the ground and thins with altitude.
+    // Exponential height fog: denser near the ground, thins with altitude.
     //   fogFactor = 1 - exp(-density * dist * heightAttenuation)
     //   heightAtt = exp(-heightFalloff * max(worldPos.z, 0))
     //
-    // Setting density = 0 (via CPU when fog is disabled) makes fogFactor = 0,
-    // which skips the blend with no extra shader branch.
+    // density=0 (set by CPU when fog is disabled) makes fogFactor=0 with no branch.
     {
-        float fogDensity      = ubo.fogParams.x;
-        float fogHeightFalloff= ubo.fogParams.y;
-        float fogMaxOpacity   = ubo.fogParams.z;
+        float fogDensity       = ubo.fogParams.x;
+        float fogHeightFalloff = ubo.fogParams.y;
+        float fogMaxOpacity    = ubo.fogParams.z;
 
         float dist      = length(ubo.cameraPos.xyz - vertIn.fragWorldPos);
         float heightAtt = exp(-fogHeightFalloff * max(vertIn.fragWorldPos.z, 0.0));
@@ -294,10 +368,10 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
         color = lerp(color, ubo.fogColor.xyz, fogFactor);
     }
 
-    // Apply exposure then tonemap into [0,1] linear range.
-    // The sRGB render target applies the gamma curve automatically on write,
-    // so no manual pow(color, 1/2.2) is needed here.
-    // exposure == 0 is the sentinel for "tonemapping disabled" — pass through.
+    // --- Tonemapping ---
+    // Apply exposure then ACES filmic curve.
+    // exposure==0 is the sentinel for "disabled" — clamp and pass through instead.
+    float exposure = ubo.materialParams.w;
     if (exposure > 0.0f)
         color = ACESFilmic(color * exposure);
     else

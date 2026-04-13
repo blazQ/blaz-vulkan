@@ -62,7 +62,7 @@ private:
         uint32_t indexCount = 0;
         glm::mat4 modelMatrix      = glm::mat4(1.0f);
         uint32_t  textureIndex     = 0xFFFFu;
-        uint32_t  specularMapIndex = 0xFFFFu;
+        uint32_t  metallicRoughnessIndex = 0xFFFFu;
         uint32_t  normalMapIndex   = 0xFFFFu;
         uint32_t  heightMapIndex   = 0xFFFFu;
 
@@ -77,7 +77,7 @@ private:
     {
         glm::mat4 model;
         uint32_t  textureIndex;
-        uint32_t  specularMapIndex; // 0xFFFF = no specular map, use global specStrength
+        uint32_t  metallicRoughnessIndex; // 0xFFFF = use default roughness/metallic from UBO
         uint32_t  normalMapIndex;   // 0xFFFF = use geometric normal
         uint32_t  heightMapIndex;   // 0xFFFF = no height map, skip POM
     };
@@ -92,7 +92,7 @@ private:
         glm::mat4 lightSpaceMatrix;
         glm::vec4 lightDir;
         glm::vec4 cameraPos;
-        glm::vec4 materialParams;        // x=ambient, y=specStrength, z=shininess, w=exposure
+        glm::vec4 materialParams;        // x=ambient, y=defaultRoughness, z=defaultMetallic, w=exposure
         glm::vec4 pointLightPos[4];      // xyz=world position, w=intensity
         glm::vec4 pointLightColor[4];    // xyz=color, w=radius (falloff distance)
         glm::vec4 lightCounts;           // x=number of active point lights
@@ -203,8 +203,8 @@ private:
 
     // Lighting / material
     float ambient          = 0.2f;
-    float specularStrength = 0.5f;
-    float shininess        = 32.0f;
+    float defaultRoughness = 0.5f;
+    float defaultMetallic  = 0.0f;
     float exposure         = 1.0f;
     bool  tonemapping      = true;
 
@@ -213,9 +213,7 @@ private:
     // Too low  → shadow acne (surface self-shadows with noise).
     float shadowBiasMin = 0.0005f;
     float shadowBiasMax = 0.003f;
-    float shadowOrthoSize = 20.0f;  // half-extent of the light ortho frustum
-    float shadowNear      = 0.1f;
-    float shadowFar       = 100.0f;
+    float shadowFar = 60.0f;  // shadow distance: how far from camera to cast shadows
 
     // Parallax Occlusion Mapping
     float pomDepthScale = 0.05f;   // how tall the displacement appears (world units)
