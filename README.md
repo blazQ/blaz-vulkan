@@ -19,7 +19,7 @@ The next steps, as of mid April 2026, are to write a comprehensive set of notes 
 ### Prerequisites
 
 - CMake 3.29+
-- Vulkan SDK 1.4.335+
+- [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home) 1.4.335+ — must be sourced before building (`source ~/VulkanSDK/<version>/setup-env.sh`)
 - GLFW3, GLM, STB
 - `slangc` (Slang shader compiler)
 
@@ -27,7 +27,7 @@ The Slang shared libraries (`libslang-compiler.so` etc.) must be on the system l
 
 ### Clone
 
-This repository uses git submodules (Due to Dear ImGui, fastgltf dependencies). Clone with:
+This repository uses git submodules (Dear ImGui, fastgltf). Clone with:
 
 ```bash
 git clone --recurse-submodules <repo-url>
@@ -92,9 +92,9 @@ cmake --workflow --preset <name>
 
 ### Rendering
 
+- **Cook-Torrance BRDF** — physically-based direct lighting with GGX normal distribution, Smith geometry term, and Fresnel-Schlick; metallic-roughness workflow using maps extracted by the GLTF loader; replaces Blinn-Phong
 - **Shadow mapping** — dedicated depth pre-pass, 9-tap PCF filtering, slope-scale bias (tweakable min/max via ImGui to balance acne vs. peter panning)
-- **Blinn-Phong lighting** — directional light with shadow casting, diffuse + ambient + specular
-- **Specular maps** — per-texel tinted specular intensity (RGB), falls back to global specular strength slider
+- **Specular maps** — per-texel tinted specular intensity (RGB), used as a roughness override fallback
 - **Normal mapping** — tangent-space normal maps; tangent vectors computed analytically for procedural meshes and via Gram-Schmidt for OBJ models, stored as `float4` with bitangent sign in `w`
 - **Parallax Occlusion Mapping (POM)** — adaptive linear raymarch (8–32 steps) + 5-step binary refinement in tangent space; depth scale and step counts tunable in ImGui; activated per-object via `"heightMap"` in scene JSON
 - **Point lights** — up to 4, polynomial `(1-(d/r)²)²` falloff, no shadow casting (by design); add/remove at runtime via ImGui
@@ -118,19 +118,19 @@ cmake --workflow --preset <name>
 
 ### Infrastructure
 
+- **Vulkan Profiles** (`VP_KHR_ROADMAP_2022`) — device selection and logical device creation use the profiles API; `vpGetPhysicalDeviceProfileSupport` replaces manual feature checks, `vpCreateDevice` ensures the full profile feature set is enabled; `vulkan_profiles.hpp` comes from the LunarG Vulkan SDK
 - **Dynamic rendering** (`VK_KHR_dynamic_rendering`) — no render pass objects; shadow, scene, sky, and ImGui each in their own `beginRendering`/`endRendering` block
-- **Vulkan 1.2 features** — `descriptorIndexing`, `runtimeDescriptorArray`, `shaderSampledImageArrayNonUniformIndexing`, `scalarBlockLayout`
+- **Vulkan 1.3 features** — `dynamicRendering`, `synchronization2`, `runtimeDescriptorArray`, `descriptorBindingPartiallyBound`, `shaderSampledImageArrayNonUniformIndexing` all guaranteed via `VP_KHR_ROADMAP_2022`
 - **Swapchain** and **Device** abstracted into their own classes
 - **Dear ImGui** integration with dynamic rendering backend
 - **CMakePresets** — `CMakePresets.json` encodes debug/release/relwithdebinfo configurations; `run.sh` is a thin wrapper around `cmake --workflow`; IDE preset selection works out of the box with VSCode CMake Tools
 
 ### Future developments
 
-The immediate goal is to consolidate and clean up what's here before adding more features. Current thoughts:
-
-- Replace Blinn-Phong with a physically-based BXDF (Cook-Torrance or similar), using the metallic-roughness maps already extracted by the GLTF loader
+- **SSAO** — normal buffer MRT output is already in place (WIP); next step is the screen-space occlusion pass and blur
+- **Mesh instancing / shared buffers** — currently each renderable owns its own vertex and index buffers; duplicate meshes should share GPU buffers and use instanced draw calls
 - Better code organisation — the renderer class has grown large; splitting it into more focused subsystems or exploring render graph concepts
-- Revisit implemented techniques to fix edge cases (shadow map coverage for large scenes, POM artifacts at silhouettes) and understand them better
+- Revisit implemented techniques to fix edge cases (shadow map coverage for large scenes, POM artifacts at silhouettes)
 
 ---
 

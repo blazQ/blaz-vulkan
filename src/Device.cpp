@@ -1,4 +1,5 @@
 #include "Device.hpp"
+#include <vulkan/vulkan_profiles.hpp>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -194,7 +195,16 @@ void Device::createLogicalDevice()
             static_cast<uint32_t>(requiredDeviceExtensions.size()),
         .ppEnabledExtensionNames = requiredDeviceExtensions.data()};
 
-    device = vk::raii::Device(physicalDevice, deviceCreateInfo);
+    constexpr VpProfileProperties profile{VP_KHR_ROADMAP_2022_NAME,
+                                          VP_KHR_ROADMAP_2022_SPEC_VERSION};
+    VpDeviceCreateInfo vpDeviceCreateInfo{
+        .pCreateInfo             = reinterpret_cast<const VkDeviceCreateInfo *>(&deviceCreateInfo),
+        .enabledFullProfileCount = 1,
+        .pEnabledFullProfiles    = &profile};
+    VkDevice rawDevice;
+    if (vpCreateDevice(*physicalDevice, &vpDeviceCreateInfo, nullptr, &rawDevice) != VK_SUCCESS)
+        throw std::runtime_error("failed to create logical device with VP_KHR_ROADMAP_2022 profile!");
+    device = vk::raii::Device(physicalDevice, rawDevice);
     queue = vk::raii::Queue(device, queueIndex, 0);
 }
 
@@ -204,17 +214,14 @@ bool Device::isDeviceSuitable(const vk::raii::PhysicalDevice &device)
     bool isDiscreteGPU = device.getProperties().deviceType ==
                          vk::PhysicalDeviceType::eDiscreteGpu;
 
-    // Check if the physicalDevice supports the Vulkan 1.3 API version
-    bool supportsVulkan1_3 =
-        device.getProperties().apiVersion >= VK_API_VERSION_1_3;
-
-    // Check if any of the queue families support graphics operations
+    // Check if any queue family supports graphics
     auto queueFamilies = device.getQueueFamilyProperties();
     bool supportsGraphics =
         std::ranges::any_of(queueFamilies, [](auto const &qfp)
                             { return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
 
-    // Check if all required physicalDevice extensions are available
+    // Check that app-specific extensions (e.g. VK_KHR_swapchain) are present —
+    // these are not part of the profile.
     auto availableDeviceExtensions =
         device.enumerateDeviceExtensionProperties();
     bool supportsAllRequiredExtensions = std::ranges::all_of(
@@ -230,27 +237,16 @@ bool Device::isDeviceSuitable(const vk::raii::PhysicalDevice &device)
                 });
         });
 
-    // Check if the physicalDevice supports the required features
-    auto features = device.template getFeatures2<
-        vk::PhysicalDeviceFeatures2,
-        vk::PhysicalDeviceVulkan12Features,
-        vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-    bool supportsRequiredFeatures =
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .runtimeDescriptorArray &&
-        features.template get<vk::PhysicalDeviceVulkan12Features>()
-            .descriptorBindingPartiallyBound &&
-        features.template get<vk::PhysicalDeviceVulkan13Features>()
-            .dynamicRendering &&
-        features
-            .template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-            .extendedDynamicState;
+    // VP_KHR_ROADMAP_2022 guarantees Vulkan 1.3, dynamicRendering,
+    // synchronization2, runtimeDescriptorArray, descriptorBindingPartiallyBound,
+    // and the other features we need — replacing the manual feature checks above.
+    constexpr VpProfileProperties profile{VP_KHR_ROADMAP_2022_NAME,
+                                          VP_KHR_ROADMAP_2022_SPEC_VERSION};
+    VkBool32 profileSupported = VK_FALSE;
+    vpGetPhysicalDeviceProfileSupport(*instance, *device, &profile, &profileSupported);
 
-    // Return true if the physicalDevice meets all the criteria
-    return supportsVulkan1_3 && supportsGraphics &&
-           supportsAllRequiredExtensions && supportsRequiredFeatures &&
-           isDiscreteGPU;
+    return profileSupported && supportsGraphics &&
+           supportsAllRequiredExtensions && isDiscreteGPU;
 }
 
 vk::SampleCountFlagBits Device::getMaxUsableSampleCount()
