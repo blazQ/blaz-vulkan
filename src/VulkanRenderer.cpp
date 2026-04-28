@@ -60,6 +60,9 @@ void VulkanRenderer::run()
 
 void VulkanRenderer::initWindow()
 {
+    if (getenv("ENABLE_VULKAN_RENDERDOC_CAPTURE"))
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window = glfwCreateWindow(WIDTH, HEIGHT, "blaz-engine", nullptr, nullptr);
